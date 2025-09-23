@@ -1,0 +1,975 @@
+import os
+import sys
+import logging
+import asyncio
+import random
+import hashlib
+from datetime import datetime
+import sqlite3
+from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
+from telegram import Bot
+import time
+import aiohttp
+import json
+import re
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class NaukriJobScraper:
+    def __init__(self, telegram_token, channel_id):
+        self.job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch"
+        self.telegram_token = telegram_token
+        self.channel_id = channel_id
+        self.db_path = "jobs.db"
+        self.use_proxies = True
+        self.proxies = []
+        self.last_proxy_fetch_time = 0
+        self.proxy_fetch_interval = 30 * 60  # 30 minutes
+        self.setup_database()
+        
+    def setup_database(self):
+        """Initialize SQLite database to store job information"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            title TEXT,
+            company TEXT,
+            location TEXT,
+            posted_date TEXT,
+            apply_link TEXT,
+            posted_to_telegram INTEGER DEFAULT 0,
+            timestamp TEXT
+        )
+        ''')
+        conn.commit()
+        conn.close()
+        logger.info("Database setup complete")
+    
+    def get_random_user_agent(self):
+        """Return a random user agent from a list of common browsers"""
+        user_agents = [
+            # Chrome on Windows
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+            # Firefox on Windows
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/118.0',
+            # Edge on Windows
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+            # Safari on macOS
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+            # Chrome on macOS
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # Mobile User Agents
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'
+        ]
+        return random.choice(user_agents)
+        
+    class BrowserContextManager:
+        """Context manager for browser context"""
+        def __init__(self, scraper):
+            self.scraper = scraper
+            self.playwright = None
+            self.browser = None
+            self.context = None
+            
+        async def __aenter__(self):
+            self.playwright = await async_playwright().start()
+            
+            # Get random user agent and viewport
+            user_agent = self.scraper.get_random_user_agent()
+            viewport = self.scraper.get_random_viewport()
+            
+            # Launch browser with enhanced stealth mode
+            browser_args = [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-infobars',
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-extensions',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-site-isolation-trials',
+                '--disable-web-security',
+                '--disable-features=BlockInsecurePrivateNetworkRequests',
+                '--disable-notifications',
+                '--disable-popup-blocking',
+                '--ignore-certificate-errors',
+                '--window-size=1920,1080',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-breakpad',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu',
+                '--hide-scrollbars',
+                '--mute-audio'
+            ]
+            
+            # Set headless mode to False for debugging, True for production
+            headless_mode = False
+            
+            self.browser = await self.playwright.chromium.launch(
+                headless=headless_mode,
+                args=browser_args
+            )
+            
+            # Configure context with enhanced stealth settings
+            context_options = {
+                'viewport': viewport,
+                'user_agent': user_agent,
+                'locale': 'en-US',
+                'timezone_id': 'Asia/Kolkata',
+                'color_scheme': 'no-preference',  # Use system default
+                'geolocation': {'latitude': 12.9716, 'longitude': 77.5946},
+                'permissions': ['geolocation'],
+                'extra_http_headers': {
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cache-Control': 'max-age=0',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'DNT': '1',
+                    'Referer': 'https://www.google.com/',
+                    'Sec-Ch-Ua': '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"Windows"'
+                }
+            }
+            
+            # Create browser context
+            self.context = await self.browser.new_context(**context_options)
+            
+            # Add cookies to appear more like a real user
+            await self.context.add_cookies([
+                {
+                    'name': 'visited_before',
+                    'value': 'true',
+                    'domain': '.naukri.com',
+                    'path': '/',
+                },
+                {
+                    'name': 'session_depth',
+                    'value': str(random.randint(1, 5)),
+                    'domain': '.naukri.com',
+                    'path': '/',
+                }
+            ])
+            
+            # Add comprehensive stealth scripts
+            await self.context.add_init_script("""
+                // Override webdriver property with more properties
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => false,
+                    enumerable: true,
+                    configurable: true
+                });
+            """)
+            
+            return self.context
+            
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+    
+    def get_browser_context(self):
+        """Return a context manager for browser context"""
+        return self.BrowserContextManager(self)
+    
+    def get_random_viewport(self):
+        """Return a random viewport size"""
+        viewports = [
+            {'width': 1920, 'height': 1080},  # Full HD
+            {'width': 1366, 'height': 768},   # Common laptop
+            {'width': 1536, 'height': 864},   # Common laptop
+            {'width': 1440, 'height': 900},   # MacBook
+            {'width': 1280, 'height': 720},   # HD
+            {'width': 1680, 'height': 1050},  # Large monitor
+        ]
+        return random.choice(viewports)
+        
+    async def fetch_free_proxies(self):
+        """Fetch a list of free proxies from public proxy lists"""
+        if not self.use_proxies:
+            return []
+            
+        current_time = time.time()
+        # Only fetch new proxies if it's been more than the fetch interval
+        if self.proxies and current_time - self.last_proxy_fetch_time < self.proxy_fetch_interval:
+            logger.info(f"Using cached proxies, count: {len(self.proxies)}")
+            return self.proxies
+            
+        logger.info("Fetching new proxy list")
+        proxies = []
+        
+        # Try multiple proxy sources for redundancy
+        sources = [
+            "https://www.sslproxies.org/",
+            "https://free-proxy-list.net/",
+            "https://www.us-proxy.org/"
+        ]
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                for source in sources:
+                    try:
+                        async with session.get(source, timeout=10) as response:
+                            if response.status == 200:
+                                html = await response.text()
+                                soup = BeautifulSoup(html, 'html.parser')
+                                table = soup.find('table', attrs={'class': 'table table-striped table-bordered'})
+                                
+                                if not table:
+                                    continue
+                                    
+                                for row in table.find_all('tr'):
+                                    cells = row.find_all('td')
+                                    if len(cells) > 1:
+                                        ip = cells[0].text.strip()
+                                        port = cells[1].text.strip()
+                                        https = cells[6].text.strip()
+                                        
+                                        # Only use HTTPS proxies
+                                        if https.lower() == 'yes' and self.is_valid_ip(ip):
+                                            proxy = f"http://{ip}:{port}"
+                                            proxies.append(proxy)
+                    except Exception as e:
+                        logger.warning(f"Error fetching proxies from {source}: {str(e)}")
+                        continue
+        except Exception as e:
+            logger.error(f"Error fetching proxies: {str(e)}")
+        
+        # Deduplicate and shuffle
+        proxies = list(set(proxies))
+        random.shuffle(proxies)
+        
+        # Update cache
+        self.proxies = proxies
+        self.last_proxy_fetch_time = current_time
+        
+        logger.info(f"Fetched {len(proxies)} proxies")
+        return proxies
+    
+    def is_valid_ip(self, ip):
+        """Check if the IP address is valid"""
+        pattern = r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$'
+        match = re.match(pattern, ip)
+        if not match:
+            return False
+        for i in range(1, 5):
+            if int(match.group(i)) > 255:
+                return False
+        return True
+    
+    async def get_working_proxy(self):
+        """Test proxies and return a working one"""
+        if not self.use_proxies:
+            return None
+            
+        proxies = await self.fetch_free_proxies()
+        if not proxies:
+            logger.warning("No proxies available")
+            return None
+            
+        # Test up to 5 random proxies
+        test_proxies = random.sample(proxies, min(5, len(proxies)))
+        
+        for proxy in test_proxies:
+            try:
+                logger.info(f"Testing proxy: {proxy}")
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        "https://www.google.com", 
+                        proxy=proxy,
+                        timeout=5,
+                        headers={'User-Agent': self.get_random_user_agent()}
+                    ) as response:
+                        if response.status == 200:
+                            logger.info(f"Found working proxy: {proxy}")
+                            return proxy
+            except Exception:
+                continue
+                
+        logger.warning("No working proxy found")
+        return None
+    
+    async def simulate_human_behavior(self, page):
+        """Simulate human-like behavior to avoid detection"""
+        logger.info("Simulating human-like behavior")
+        
+        # Random mouse movements
+        for _ in range(random.randint(3, 7)):
+            x = random.randint(100, 800)
+            y = random.randint(100, 600)
+            await page.mouse.move(x, y, steps=random.randint(5, 10))
+            await asyncio.sleep(random.uniform(0.1, 0.5))
+        
+        # Random scrolling
+        for _ in range(random.randint(2, 5)):
+            await page.evaluate(f'window.scrollBy(0, {random.randint(100, 300)})')
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            
+        # Occasionally scroll back up
+        if random.random() < 0.3:
+            await page.evaluate(f'window.scrollBy(0, {random.randint(-200, -100)})')
+            await asyncio.sleep(random.uniform(0.5, 1.0))
+            
+        # Random pauses
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+    
+    async def scrape_jobs(self, categories=None):
+        """Scrape job listings from Naukri.com
+        
+        Args:
+            categories (list): List of job categories to scrape. Defaults to IT jobs if None.
+        """
+        jobs = []
+        
+        # Define job categories if not provided
+        if categories is None:
+            categories = [
+                {"name": "IT", "url": "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch"},
+                {"name": "Software", "url": "https://www.naukri.com/software-developer-jobs"},
+                {"name": "Data Science", "url": "https://www.naukri.com/data-scientist-jobs"}
+            ]
+        
+        # Maximum retry attempts
+        max_retries = 3
+        
+        try:
+            # Try to get a working proxy
+            proxy = await self.get_working_proxy() if self.use_proxies else None
+            if proxy:
+                logger.info(f"Using proxy: {proxy}")
+            else:
+                logger.info("No proxy available, proceeding without proxy")
+                
+            async with async_playwright() as p:
+                # Get random user agent and viewport
+                user_agent = self.get_random_user_agent()
+                viewport = self.get_random_viewport()
+                
+                logger.info(f"Using user agent: {user_agent}")
+                
+                # Launch browser with enhanced stealth mode
+                browser_args = [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-extensions',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-site-isolation-trials',
+                    '--disable-web-security',
+                    '--disable-features=BlockInsecurePrivateNetworkRequests',
+                    '--disable-notifications',
+                    '--disable-popup-blocking',
+                    '--ignore-certificate-errors',
+                    '--window-size=1920,1080',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-breakpad',
+                    '--disable-component-extensions-with-background-pages',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--hide-scrollbars',
+                    '--mute-audio'
+                ]
+                
+                # Add proxy if available
+                if proxy:
+                    browser_args.append(f'--proxy-server={proxy}')
+                
+                # Set headless mode to False for debugging, True for production
+                headless_mode = False
+                
+                browser = await p.chromium.launch(
+                    headless=headless_mode,
+                    args=browser_args
+                )
+                
+                # Configure context with enhanced stealth settings
+                context_options = {
+                    'viewport': viewport,
+                    'user_agent': user_agent,
+                    'locale': 'en-US',
+                    'timezone_id': 'Asia/Kolkata',
+                    'color_scheme': 'no-preference',  # Use system default
+                    'geolocation': {'latitude': 12.9716, 'longitude': 77.5946},
+                    'permissions': ['geolocation'],
+                    'extra_http_headers': {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Cache-Control': 'max-age=0',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'DNT': '1',
+                        'Referer': 'https://www.google.com/',
+                        'Sec-Ch-Ua': '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
+                        'Sec-Ch-Ua-Mobile': '?0',
+                        'Sec-Ch-Ua-Platform': '"Windows"'
+                    }
+                }
+                
+                # Create browser context
+                context = await browser.new_context(**context_options)
+                
+                # Add cookies to appear more like a real user
+                await context.add_cookies([
+                    {
+                        'name': 'visited_before',
+                        'value': 'true',
+                        'domain': '.naukri.com',
+                        'path': '/',
+                    },
+                    {
+                        'name': 'session_depth',
+                        'value': str(random.randint(1, 5)),
+                        'domain': '.naukri.com',
+                        'path': '/',
+                    }
+                ])
+                
+                # Add comprehensive stealth scripts
+                await context.add_init_script("""
+                    // Override webdriver property with more properties
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => false,
+                        enumerable: true,
+                        configurable: true
+                    });
+                    
+                    // Add Chrome runtime with more comprehensive properties
+                    window.chrome = {
+                        runtime: {
+                            connect: function() {},
+                            sendMessage: function() {},
+                            onMessage: {
+                                addListener: function() {},
+                                removeListener: function() {}
+                            }
+                        },
+                        loadTimes: function() { return { firstPaintTime: 0, firstPaintAfterLoadTime: 0 }; },
+                        csi: function() { return { startE: 0, onloadT: 0, pageT: 0, tran: 0 }; },
+                        app: { isInstalled: false },
+                        webstore: { onInstallStageChanged: {}, onDownloadProgress: {} }
+                    };
+                    
+                    // Add plugins
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => {
+                            return [
+                                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: 'Portable Document Format' },
+                                { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                            ];
+                        }
+                    });
+                    
+                    // Add languages
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['en-US', 'en']
+                    });
+                    
+                    // Override permissions with more comprehensive approach
+                    if (window.navigator.permissions) {
+                        const originalQuery = window.navigator.permissions.query;
+                        window.navigator.permissions.query = function(parameters) {
+                            return parameters.name === 'notifications' || 
+                                   parameters.name === 'clipboard-read' || 
+                                   parameters.name === 'clipboard-write' || 
+                                   parameters.name === 'camera' || 
+                                   parameters.name === 'microphone' ?
+                                Promise.resolve({ state: Notification.permission }) :
+                                originalQuery(parameters);
+                        };
+                    }
+                    
+                    // Override toString methods to hide script modifications
+                    const originalFunctionToString = Function.prototype.toString;
+                    Function.prototype.toString = function() {
+                        if (this === Function.prototype.toString) return originalFunctionToString.call(this);
+                        if (this === window.navigator.permissions.query) {
+                            return 'function query() { [native code] }';
+                        }
+                        return originalFunctionToString.call(this);
+                    };
+                    
+                    // Prevent iframe detection
+                    Object.defineProperty(window, 'frameElement', {
+                        get: () => null
+                    });
+                    
+                    // Spoof screen resolution
+                    Object.defineProperty(window.screen, 'width', { get: () => 1920 });
+                    Object.defineProperty(window.screen, 'height', { get: () => 1080 });
+                    Object.defineProperty(window.screen, 'availWidth', { get: () => 1920 });
+                    Object.defineProperty(window.screen, 'availHeight', { get: () => 1080 });
+                    Object.defineProperty(window.screen, 'colorDepth', { get: () => 24 });
+                    Object.defineProperty(window.screen, 'pixelDepth', { get: () => 24 });
+                """)
+                
+                # Create new page
+                page = await context.new_page()
+                
+                # Try a more direct approach - visit Naukri.com directly with proper referrer
+                try:
+                    logger.info("Visiting Naukri.com directly with referrer")
+                    await page.set_extra_http_headers({
+                        'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
+                        'User-Agent': user_agent
+                    })
+                    
+                    # Visit Naukri homepage first
+                    await page.goto('https://www.naukri.com/', wait_until='domcontentloaded', timeout=60000)
+                    await asyncio.sleep(random.uniform(3, 5))
+                    
+                    # Check if we're on the homepage
+                    if await page.title() and 'Naukri' in await page.title():
+                        logger.info("Successfully loaded Naukri homepage")
+                        
+                        # Simulate human-like behavior - random mouse movements and scrolling
+                        for _ in range(3):
+                            await page.mouse.move(random.randint(100, 800), random.randint(100, 600))
+                            await asyncio.sleep(random.uniform(0.5, 1.5))
+                        
+                        # Scroll down slowly
+                        for _ in range(5):
+                            await page.evaluate('window.scrollBy(0, 300)')
+                            await asyncio.sleep(random.uniform(0.5, 1.0))
+                            
+                        # Take a screenshot for debugging
+                        await page.screenshot(path="naukri_homepage.png")
+                    else:
+                        logger.warning("Failed to load Naukri homepage properly")
+                except Exception as e:
+                    logger.warning(f"Error visiting Naukri homepage: {str(e)}")
+                    # Continue anyway - we'll try direct category URLs
+                
+                # Only process the first category
+                if categories and len(categories) > 0:
+                    category = categories[0]
+                    category_name = category["name"]
+                    job_url = category["url"]
+                    
+                    logger.info(f"Navigating to {category_name} jobs: {job_url}")
+                    
+                    # Implement retry mechanism for the category
+                    retry_count = 0
+                    success = False
+                    
+                    while retry_count < max_retries and not success:
+                        try:
+                            # If this is a retry, get a new user agent and refresh the page context
+                            if retry_count > 0:
+                                logger.info(f"Retry attempt {retry_count} for {category_name}")
+                                # Get a new user agent
+                                new_user_agent = self.get_random_user_agent()
+                                await page.set_extra_http_headers({
+                                    'User-Agent': new_user_agent,
+                                    'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
+                                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                                    'Accept-Language': 'en-US,en;q=0.5',
+                                    'Cache-Control': 'max-age=0',
+                                    'Connection': 'keep-alive',
+                                    'Upgrade-Insecure-Requests': '1',
+                                    'DNT': '1'
+                                })
+                                # Add some delay between retries
+                                await asyncio.sleep(random.uniform(5, 10))
+                            
+                            # Skip anti-bot evasion script for now as it's causing issues
+                            logger.info(f"Navigating to {job_url} with enhanced headers")
+                            
+                            # Navigate to the job URL
+                            await page.goto(job_url, wait_until='domcontentloaded', timeout=60000)
+                            
+                            # Wait for the page to load completely
+                            await asyncio.sleep(10)
+                            
+                            # Break after first successful navigation
+                            success = True
+                        except Exception as e:
+                            logger.error(f"Navigation error: {str(e)}")
+                            retry_count += 1
+                            await asyncio.sleep(random.uniform(5, 10))
+                            continue
+                            
+                            # Take a screenshot after navigation for debugging
+                            await page.screenshot(path=f"after_{category_name}_attempt_{retry_count + 1}.png")
+                            
+                            # Simulate more human-like behavior after navigation
+                            await self.simulate_human_behavior(page)
+                            
+                            # Check if we got blocked (403 or 429 status)
+                            if response.status in [403, 429]:
+                                logger.warning(f"Access denied (status {response.status}) for {category_name}, retry {retry_count+1}/{max_retries}")
+                                # Take a screenshot of the potential captcha page
+                                captcha_screenshot_path = f"captcha_{category_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
+                                await page.screenshot(path=captcha_screenshot_path)
+                                logger.warning(f"Possible CAPTCHA detected. Screenshot saved to {captcha_screenshot_path}")
+                                
+                                # Check if there's text indicating a captcha
+                                page_content = await page.content()
+                                if 'captcha' in page_content.lower() or 'robot' in page_content.lower() or 'human' in page_content.lower():
+                                    logger.error(f"CAPTCHA detected on page for {category_name}")
+                                    
+                                    # Send notification via Telegram if configured
+                                    if self.telegram_bot_token and self.telegram_chat_id:
+                                        captcha_message = f"⚠️ CAPTCHA detected while scraping {category_name} jobs. Manual intervention required."
+                                        await self.send_telegram_message(captcha_message)
+                                        
+                                        # If in non-headless mode, wait for manual CAPTCHA solving
+                                        if not headless_mode:
+                                            logger.info("Waiting for manual CAPTCHA solving (60 seconds)...")
+                                            # Wait for a minute to allow manual solving
+                                            await asyncio.sleep(60)
+                                            logger.info("Continuing after CAPTCHA wait period")
+                                    else:
+                                        logger.warning("Telegram not configured for CAPTCHA notifications")
+                                retry_count += 1
+                                # Add longer delay on 403/429 errors
+                                await asyncio.sleep(random.uniform(15, 30))
+                                continue
+                            
+                            if not response.ok:
+                                logger.error(f"Failed to load page for {category_name}: {response.status}, retry {retry_count+1}/{max_retries}")
+                                retry_count += 1
+                                continue
+                            
+                            # Wait for content to load with increased timeout
+                            try:
+                                await page.wait_for_selector('.jobTuple', timeout=45000)
+                            except Exception as e:
+                                logger.warning(f"Timeout waiting for job listings: {str(e)}")
+                                await page.screenshot(path=f"timeout_{category_name}_attempt_{retry_count + 1}.png")
+                                retry_count += 1
+                                continue
+                            
+                            # Extract job listings
+                            job_elements = await page.query_selector_all('.jobTuple')
+                            logger.info(f"Found {len(job_elements)} job listings for {category_name}")
+                            
+                            if not job_elements:
+                                logger.warning(f"No job elements found for {category_name}, retry {retry_count+1}/{max_retries}")
+                                retry_count += 1
+                                continue
+                            
+                            category_jobs = []
+                            for job_element in job_elements:
+                                try:
+                                    # Extract job details
+                                    title_element = await job_element.query_selector('.title')
+                                    company_element = await job_element.query_selector('.companyInfo a.subTitle')
+                                    location_element = await job_element.query_selector('.locWdth span.ellipsis')
+                                    experience_element = await job_element.query_selector('.ellipsis.fleft.fs12.lh16')
+                                    posted_date_element = await job_element.query_selector('.fleft.postedDate')
+                                    
+                                    # Get job link
+                                    title_link = await job_element.query_selector('a.title')
+                                    job_url = await title_link.get_attribute('href')
+                                    
+                                    # Extract text content
+                                    title = await title_element.inner_text() if title_element else "Unknown Title"
+                                    company = await company_element.inner_text() if company_element else "Unknown Company"
+                                    location = await location_element.inner_text() if location_element else "Unknown Location"
+                                    posted_date = await posted_date_element.inner_text() if posted_date_element else "Unknown Date"
+                                    
+                                    # Generate a unique job ID
+                                    job_id = f"job_{hashlib.md5(job_url.encode()).hexdigest()}"
+                                    
+                                    # Create job object
+                                    job = {
+                                        'job_id': job_id,
+                                        'title': title.strip(),
+                                        'company': company.strip(),
+                                        'location': location.strip(),
+                                        'posted_date': posted_date.strip(),
+                                        'apply_link': job_url,
+                                        'category': category_name,
+                                        'timestamp': datetime.now().isoformat()
+                                    }
+                                    
+                                    category_jobs.append(job)
+                                except Exception as e:
+                                    logger.error(f"Error extracting job details: {str(e)}")
+                            
+                            if category_jobs:
+                                logger.info(f"Successfully extracted {len(category_jobs)} jobs in {category_name} category")
+                                jobs.extend(category_jobs)
+                                success = True
+                            else:
+                                logger.warning(f"No jobs extracted for {category_name}, retry {retry_count+1}/{max_retries}")
+                                retry_count += 1
+                                continue
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing category {category_name}: {str(e)}, retry {retry_count+1}/{max_retries}")
+                            retry_count += 1
+                            continue
+                    
+                    if not success:
+                        logger.error(f"Failed to scrape {category_name} jobs after {max_retries} retries")
+                    
+                    # Add a delay between categories to avoid rate limiting
+                    await asyncio.sleep(random.uniform(5, 10))
+                
+                await browser.close()
+                
+                # Return whatever jobs were found (may be empty)
+                if not jobs:
+                    logger.warning("No jobs found across all categories")
+                else:
+                    logger.info(f"Found a total of {len(jobs)} jobs across all categories")
+                
+                return jobs
+                
+                # Get page content and parse with BeautifulSoup
+                content = await page.content()
+                soup = BeautifulSoup(content, 'html.parser')
+                logger.info("Page content loaded and parsed with BeautifulSoup")
+                
+                # Find all job listings
+                job_cards = soup.find_all('article', class_='jobTuple')
+                
+                for job_card in job_cards[:10]:  # Limit to 10 jobs for testing
+                    try:
+                        # Extract job details
+                        title_elem = job_card.find('a', class_='title')
+                        title = title_elem.text.strip() if title_elem else "N/A"
+                        
+                        company_elem = job_card.find('a', class_='subTitle')
+                        company = company_elem.text.strip() if company_elem else "N/A"
+                        
+                        location_elem = job_card.find('li', class_='location')
+                        location = location_elem.text.strip() if location_elem else "N/A"
+                        
+                        # Extract job link
+                        job_link = title_elem['href'] if title_elem and 'href' in title_elem.attrs else ""
+                        
+                        # Extract posted date (may be in different formats)
+                        posted_date_elem = job_card.find('span', {'class': ['fleft', 'postedDate']})
+                        posted_date = posted_date_elem.text.strip() if posted_date_elem else "N/A"
+                        
+                        # Generate a unique job ID
+                        job_id = f"job_{datetime.now().strftime('%Y%m%d%H%M%S')}_{len(jobs)}"
+                        
+                        # Add job to list
+                        jobs.append({
+                            'job_id': job_id,
+                            'title': title,
+                            'company': company,
+                            'location': location,
+                            'posted_date': posted_date,
+                            'apply_link': job_link,
+                            'timestamp': datetime.now().isoformat()
+                        })
+                        
+                        logger.info(f"Found job: {title} at {company}")
+                    except Exception as e:
+                        logger.error(f"Error extracting job details: {str(e)}")
+                        continue
+                
+                # Close browser
+                await browser.close()
+                
+                if not jobs:
+                    logger.warning("No jobs found")
+                
+                return jobs
+                
+        except Exception as e:
+            logger.error(f"Failed to scrape jobs: {str(e)}")
+            return []
+    
+    def save_jobs_to_db(self, jobs):
+        """Save scraped jobs to database"""
+        if not jobs:
+            return 0
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        new_jobs_count = 0
+        
+        for job in jobs:
+            # Check if job already exists (using apply_link as unique identifier)
+            cursor.execute("SELECT * FROM jobs WHERE apply_link = ?", (job['apply_link'],))
+            existing_job = cursor.fetchone()
+            
+            if not existing_job and job['apply_link']:  # Only add if job doesn't exist and has a valid link
+                cursor.execute('''
+                INSERT INTO jobs (job_id, title, company, location, posted_date, apply_link, posted_to_telegram, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    job['job_id'],
+                    job['title'],
+                    job['company'],
+                    job['location'],
+                    job['posted_date'],
+                    job['apply_link'],
+                    0,  # Not posted to Telegram yet
+                    job['timestamp']
+                ))
+                new_jobs_count += 1
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Saved {new_jobs_count} new jobs to database")
+        return new_jobs_count
+    
+    def get_unposted_jobs(self):
+        """Get jobs that haven't been posted to Telegram yet"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row  # This enables column access by name
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM jobs WHERE posted_to_telegram = 0")
+        jobs = [dict(row) for row in cursor.fetchall()]
+        
+        conn.close()
+        
+        logger.info(f"Found {len(jobs)} unposted jobs")
+        return jobs
+    
+    def mark_job_as_posted(self, job_id):
+        """Mark a job as posted to Telegram"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("UPDATE jobs SET posted_to_telegram = 1 WHERE job_id = ?", (job_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Marked job {job_id} as posted")
+    
+    async def send_telegram_message(self, message_text, parse_mode='Markdown'):
+        """Send a message to Telegram"""
+        if not self.telegram_token or not self.channel_id:
+            logger.warning("Telegram credentials not provided, skipping message")
+            return False
+        
+        try:
+            # Create a bot instance
+            bot = Bot(token=self.telegram_token)
+            
+            # Send the message
+            await bot.send_message(
+                chat_id=self.channel_id,
+                text=message_text,
+                parse_mode=parse_mode,
+                disable_web_page_preview=False
+            )
+            
+            logger.info(f"Sent message to Telegram")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error sending to Telegram: {str(e)}")
+            return False
+    
+    async def post_job_to_telegram(self, job):
+        """Post a job to the Telegram channel"""
+        # Format message
+        message = f"""
+📌 Job Alert: {job['title']}
+🏢 Company: {job['company']}
+📍 Location: {job['location']}
+🗓️ Posted: {job['posted_date']}
+🔗 Apply Here: {job['apply_link']}
+
+#Job #{job.get('category', 'Job')}
+        """
+        
+        try:
+            # Use the general send_telegram_message method
+            result = await self.send_telegram_message(message)
+            if result:
+                logger.info(f"Posted job to Telegram: {job['title']}")
+            return result
+        except Exception as e:
+            logger.error(f"Error posting to Telegram: {str(e)}")
+            return False
+    
+    async def process_jobs(self):
+        """Main process to scrape and post jobs"""
+        try:
+            # Scrape jobs
+            logger.info("Starting job scraping")
+            jobs = await self.scrape_jobs()
+            
+            # Save to database
+            new_jobs_count = self.save_jobs_to_db(jobs)
+            logger.info(f"Found {new_jobs_count} new jobs")
+            
+            # Get unposted jobs
+            unposted_jobs = self.get_unposted_jobs()
+            logger.info(f"Found {len(unposted_jobs)} unposted jobs")
+            
+            # Post to Telegram
+            for job in unposted_jobs:
+                success = await self.post_job_to_telegram(job)
+                if success:
+                    self.mark_job_as_posted(job['job_id'])
+                    # Add a delay between posts to avoid rate limiting
+                    await asyncio.sleep(2)
+            
+            logger.info("Job processing completed")
+        except Exception as e:
+            logger.error(f"Error in process_jobs: {str(e)}")
+
+async def main():
+    """Main function to run the scraper"""
+    # Configuration
+    telegram_token = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+    channel_id = "@job_opening_free"
+    
+    # Initialize scraper
+    scraper = NaukriJobScraper(telegram_token, channel_id)
+    
+    try:
+        # Run once
+        await scraper.process_jobs()
+        
+        # Schedule to run every 1 minute
+        while True:
+            logger.info("Waiting for next scheduled run (1 minute)")
+            await asyncio.sleep(60)  # 1 minute
+            await scraper.process_jobs()
+    except asyncio.CancelledError:
+        logger.info("Task was cancelled")
+    except Exception as e:
+        logger.error(f"Error in main function: {str(e)}")
+    finally:
+        logger.info("Scraper shutdown complete")
+
+if __name__ == "__main__":
+    asyncio.run(main())

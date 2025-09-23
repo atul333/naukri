@@ -1,0 +1,690 @@
+import asyncio
+import logging
+from main import NaukriJobScraper
+from telegram import Bot
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger('test_extract_first_job')
+
+async def extract_and_post_first_job():
+    logger.info("Starting extraction of first job")
+    
+    # Initialize scraper with Telegram credentials
+    telegram_token = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+    channel_id = "@job_opening_free"
+    logger.info(f"Running with Telegram bot token and channel: {channel_id}")
+    
+    scraper = NaukriJobScraper(telegram_token, channel_id)
+    
+    try:
+        # Get the browser context manager
+        browser_context_manager = scraper.get_browser_context()
+        
+        # Use the browser context manager
+        async with browser_context_manager as context:
+            # Create a new page with portrait mode dimensions
+            page = await context.new_page()
+            
+            # Set viewport to a larger size to ensure more content is visible
+            # Using a standard desktop size instead of mobile dimensions
+            await page.set_viewport_size({"width": 1920, "height": 1080})  # Larger desktop dimensions
+            
+            # Set headers and navigate to the job URL with desktop user agent
+            # Use a desktop user agent to ensure full page view
+            desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+            
+            await page.set_extra_http_headers({
+                'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
+                'User-Agent': desktop_user_agent
+            })
+            
+            # Set user agent at context level using the correct method
+            # Note: Playwright doesn't have page.set_user_agent(), we already set it in headers
+            
+            # Navigate to the job URL with desktop mode parameters
+            job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch&forceDesktop=true"
+            logger.info(f"Navigating to {job_url} with desktop mode parameters")
+            
+            # Add extra parameters to request headers to force desktop version
+            await page.set_extra_http_headers({
+                'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
+                'User-Agent': desktop_user_agent,
+                'Sec-CH-UA-Mobile': '?0',  # Indicate not a mobile device
+                'Sec-CH-UA-Platform': '"Windows"',  # Indicate Windows platform
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            })
+            
+            await page.goto(job_url, wait_until='domcontentloaded', timeout=60000)
+            
+            # Wait for the page to load completely
+            await asyncio.sleep(15)  # Increased wait time for page to fully load
+            
+            # Check for and handle rotation message
+            try:
+                rotation_message = await page.query_selector('text="Please rotate your device"')
+                if rotation_message:
+                    logger.info("Detected rotation message, attempting to bypass...")
+                    # Execute JavaScript to remove the rotation message and any overlay
+                    await page.evaluate("""
+                        () => {
+                            // Remove rotation message elements
+                            const elements = document.querySelectorAll('*');
+                            for (const el of elements) {
+                                if (el.textContent && el.textContent.includes('rotate your device')) {
+                                    el.style.display = 'none';
+                                }
+                                // Also remove any overlay or blocking elements
+                                if (el.style && (el.style.position === 'fixed' || el.style.position === 'absolute')) {
+                                    if (el.style.zIndex > 100 || el.style.opacity < 1) {
+                                        el.style.display = 'none';
+                                    }
+                                }
+                            }
+                            // Force desktop mode
+                            document.querySelector('body').classList.remove('portrait');
+                            document.querySelector('body').classList.add('landscape');
+                            return true;
+                        }
+                    """)
+                    logger.info("Applied JavaScript fixes for rotation message")
+                    await asyncio.sleep(5)  # Wait for changes to apply
+            except Exception as e:
+                logger.warning(f"Error handling rotation message: {str(e)}")
+                # Continue anyway
+            
+            # Click on Sort by dropdown
+            logger.info("Clicking on Sort by dropdown")
+            try:
+                # Take a full page screenshot before attempting to find the sort dropdown
+                await page.screenshot(path="before_sort.png", full_page=True)
+                logger.info("Saved full page screenshot to before_sort.png")
+                
+                # Try multiple approaches to find and click the sort dropdown
+                # First try: Use evaluate to find and click the sort dropdown by text content
+                logger.info("Trying to find sort dropdown by text content")
+                sort_clicked = await page.evaluate("""
+                    () => {
+                        // Try to find elements containing 'Sort by' or 'Relevance' text
+                        const elements = Array.from(document.querySelectorAll('*'));
+                        for (const el of elements) {
+                            if (el.textContent && (el.textContent.includes('Sort by') || el.textContent.includes('Relevance'))) {
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                """)
+                
+                if sort_clicked:
+                    logger.info("Found and clicked sort dropdown using JavaScript")
+                    await asyncio.sleep(3)  # Wait for dropdown to appear
+                    
+                    # Take a full page screenshot after clicking the dropdown
+                    await page.screenshot(path="after_dropdown_click.png", full_page=True)
+                    logger.info("Saved full page screenshot to after_dropdown_click.png")
+                    
+                    # Try to click on Date option using JavaScript
+                    date_clicked = await page.evaluate("""
+                        () => {
+                            // Try to find elements containing 'Date' text
+                            const elements = Array.from(document.querySelectorAll('*'));
+                            for (const el of elements) {
+                                if (el.textContent && el.textContent.trim() === 'Date') {
+                                    el.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }
+                    """)
+                    
+                    if date_clicked:
+                        logger.info("Selected Date sorting option using JavaScript")
+                        # Wait for page to refresh with new sorting
+                        await asyncio.sleep(10)
+                    else:
+                        logger.warning("Could not find Date option in dropdown using JavaScript")
+                else:
+                    # Second try: Use traditional selectors with broader matching
+                    logger.info("Trying traditional selectors for sort dropdown")
+                    sort_dropdown = await page.wait_for_selector(
+                        '[data-qa*="sort"], [class*="sort"], [class*="Sort"], [class*="filter"], [class*="Filter"], button:has-text("Sort"), div:has-text("Sort by"), span:has-text("Sort by"), div:has-text("Relevance")', 
+                        timeout=10000
+                    )
+                    if sort_dropdown:
+                        await sort_dropdown.click()
+                        logger.info("Clicked on Sort by dropdown using selector")
+                        
+                        # Wait for dropdown options to appear and click on Date option
+                        await asyncio.sleep(3)
+                        date_option = await page.wait_for_selector(
+                            '[data-qa*="Date"], li:has-text("Date"), .option:has-text("Date"), [class*="option"]:has-text("Date"), div:has-text("Date")', 
+                            timeout=10000
+                        )
+                        if date_option:
+                            await date_option.click()
+                            logger.info("Selected Date sorting option using selector")
+                            # Wait for page to refresh with new sorting
+                            await asyncio.sleep(10)
+                        else:
+                            logger.warning("Could not find Date option in dropdown using selector")
+                    else:
+                        logger.warning("Could not find Sort by dropdown using selector")
+            except Exception as e:
+                logger.error(f"Error while trying to sort by date: {str(e)}")
+                logger.info("Continuing with default sorting")
+            
+            # Get page content immediately for analysis
+            page_content = await page.content()
+            with open("page_content.html", "w", encoding="utf-8") as f:
+                f.write(page_content)
+            logger.info("Saved page content to page_content.html")
+            
+            # Use BeautifulSoup to extract job information directly
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(page_content, 'html.parser')
+            
+            # Look for the first job card after sorting by date
+            logger.info("Looking for the first job card after sorting by date")
+            
+            # Try to find job cards with various selectors
+            job_cards = soup.select('article.jobTupleWrapper, .jobTuple, .SRPstyle__NormalCardStyle-sc-1rnhgwh-0, div[data-job-id]')
+            logger.info(f"Found {len(job_cards)} potential job cards")
+            
+            target_job = None
+            
+            # Get the first job card
+            if job_cards:
+                target_job = job_cards[0]
+                title_element = target_job.select_one('.jobTupleHeader .title, h2.jobTitle, .title, h2, h3, .srpHdr, .list-job-title')
+                if title_element:
+                    logger.info(f"Found first job: {title_element.text.strip()}")
+                else:
+                    logger.info("Found first job card but couldn't extract title")
+            else:
+                logger.warning("No job cards found on the page")
+            
+            if target_job:
+                # Extract all required information from the job card
+                title_element = target_job.select_one('.jobTupleHeader .title, h2.jobTitle, .title, h2, h3, .srpHdr, .list-job-title')
+                if not title_element:
+                    logger.warning("Could not extract job title, skipping this job")
+                    return
+                title = title_element.text.strip()
+                
+                # Extract company name with expanded selectors for desktop version
+                company_element = target_job.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo, [data-test="company-name"], [class*="comp"], [class*="org"], [itemprop="hiringOrganization"]')
+                if not company_element:
+                    # Try to find company name in parent or sibling elements
+                    parent_element = target_job.parent
+                    if parent_element:
+                        company_element = parent_element.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo')
+                    
+                    # If still not found, try to find any text that might be a company name
+                    if not company_element:
+                        # Look for any element that might contain company information
+                        all_elements = target_job.select('span, div, a, p')
+                        for element in all_elements:
+                            text = element.text.strip()
+                            # Skip elements with very long text (likely not a company name)
+                            if len(text) > 0 and len(text) < 50 and text != title:
+                                company_element = element
+                                break
+                    
+                    if not company_element:
+                        logger.warning("Could not extract company name, skipping this job")
+                        return
+                
+                # Clean up company name - remove reviews and ratings completely
+                company_text = company_element.text.strip()
+                # Extract only the company name without reviews, ratings, or numbers
+                import re
+                # First split by "Reviews" or "Review" if present
+                if "Reviews" in company_text:
+                    company = company_text.split("Reviews")[0].strip()
+                elif "Review" in company_text:
+                    company = company_text.split("Review")[0].strip()
+                else:
+                    company = company_text
+                
+                # Remove any trailing numbers, decimal points, and special characters
+                company = re.sub(r'\d+\.?\d*$', '', company)  # Remove trailing numbers like ratings
+                company = re.sub(r'[^a-zA-Z\s]', '', company)  # Keep only letters and spaces
+                company = company.strip()
+                
+                # Extract experience
+                experience_element = target_job.select_one('.ellipsis.fleft.fs12.lh16, [class*="experience"], [class*="exp"]')
+                experience = experience_element.text.strip() if experience_element else "Not specified"
+                
+                # Extract location
+                location_element = target_job.select_one('.locWdth span.ellipsis, .location, [class*="location"], [class*="loc"]')
+                location = location_element.text.strip() if location_element else "Not specified"
+                
+                # Extract CTC (Cost to Company)
+                ctc = "NA"
+                import re
+                
+                # Try to find salary information in specific elements
+                salary_selectors = [
+                    '.salary-span', 
+                    '.salary', 
+                    '[class*="salary"]', 
+                    '[class*="ctc"]', 
+                    '[class*="package"]', 
+                    '[class*="lacs"]'
+                ]
+                
+                # First try specific salary selectors
+                for selector in salary_selectors:
+                    salary_element = target_job.select_one(selector)
+                    if salary_element and salary_element.text.strip():
+                        text = salary_element.text.strip()
+                        # Look for patterns like "10-15 LPA" or "12 Lakhs"
+                        salary_pattern = re.search(r'(\d+(?:\.\d+)?\s*(?:-\s*\d+(?:\.\d+)?)?\s*(?:lacs|lpa|lakhs|inr|₹|pa|l\.p\.a))', text.lower())
+                        if salary_pattern:
+                            ctc = salary_pattern.group(1).upper()
+                            if 'LPA' not in ctc and 'LACS' not in ctc and 'LAKHS' not in ctc:
+                                ctc += " LPA"
+                            break
+                
+                # If not found with specific selectors, try to find in all elements
+                if ctc == "NA":
+                    all_elements = target_job.select('span, div, a, p')
+                    for element in all_elements:
+                        text = element.text.strip()
+                        # Skip if it's the company name or too long
+                        if text == company_text or len(text) > 30:
+                            continue
+                            
+                        # Look for text containing salary indicators
+                        if any(term in text.lower() for term in ['lacs', 'lpa', 'lakhs', 'inr', '₹', 'pa', 'ctc', 'salary']):
+                            # Extract just the salary part
+                            salary_pattern = re.search(r'(\d+(?:\.\d+)?\s*(?:-\s*\d+(?:\.\d+)?)?\s*(?:lacs|lpa|lakhs|inr|₹|pa|l\.p\.a))', text.lower())
+                            if salary_pattern:
+                                ctc = salary_pattern.group(1).upper()
+                                if 'LPA' not in ctc and 'LACS' not in ctc and 'LAKHS' not in ctc:
+                                    ctc += " LPA"
+                                break
+                
+                # Extract job role
+                job_role_element = target_job.select_one('.job-role, [class*="role"], [class*="designation"]')
+                job_role = job_role_element.text.strip() if job_role_element else title
+                
+                # Extract hashtags/skills from the job card
+                hashtags = []
+                
+                # First try to find skills in the dedicated skills section which is usually at the bottom of job cards
+                # This is where skills like Java, Problem Solving, Fullstack would typically appear
+                skill_elements = target_job.select('.chip-wrapper span, .skill-chip, .skill-label, .tag-item, .job-skill')
+                if skill_elements:
+                    for skill in skill_elements:
+                        skill_text = skill.text.strip()
+                        if skill_text and len(skill_text) < 30:  # Reasonable length for a skill
+                            hashtags.append(skill_text)
+                
+                # If no skills found in dedicated section, try other selectors
+                if not hashtags:
+                    skill_selectors = [
+                        '.tags, [class*="tag"], [class*="skill"]',
+                        '.skill, .skills, .jobTags',
+                        '[class*="technologies"], [class*="tech"]',
+                        '.key-skill, .keySkills'
+                    ]
+                    
+                    for selector in skill_selectors:
+                        hashtag_elements = target_job.select(selector)
+                        if hashtag_elements:
+                            for tag in hashtag_elements:
+                                # Split by spaces if it's a single element with multiple skills
+                                tag_text = tag.text.strip()
+                                if ' ' in tag_text and len(tag_text) < 50:  # If it looks like multiple skills in one tag
+                                    skills = [skill.strip() for skill in tag_text.split() if skill.strip()]
+                                    hashtags.extend(skills)
+                                else:
+                                    hashtags.append(tag_text)
+                
+                # If still no hashtags found, try to find any elements that might contain skills
+                if not hashtags:
+                    # Look for elements with short text that might be skills
+                    all_elements = target_job.select('span, div, a, p')
+                    for element in all_elements:
+                        text = element.text.strip().lower()
+                        # Common skills that might appear in job listings
+                        common_skills = ['java', 'python', 'c#', 'javascript', 'react', 'angular', 'node', 'sql', 
+                                        'data', 'api', 'cloud', 'aws', 'azure', 'devops', 'agile', 'scrum',
+                                        'hive', 'scala', 'spark', 'hadoop', 'unit testing', 'ci/cd']
+                        
+                        for skill in common_skills:
+                            if skill in text and len(text) < 30 and skill not in hashtags:
+                                hashtags.append(skill)
+                
+                # Clean up hashtags - remove duplicates and format properly
+                hashtags = list(set([tag.lower().strip() for tag in hashtags if tag.strip()]))
+                
+                # Prioritize specific skills if they exist in our hashtags list
+                priority_skills = ['java', 'problem solving', 'fullstack', 'python', 'javascript', 'react', 'angular']
+                prioritized_hashtags = []
+                
+                # First add priority skills that are in our hashtags
+                for skill in priority_skills:
+                    if skill in hashtags or any(skill in tag for tag in hashtags):
+                        prioritized_hashtags.append(skill)
+                
+                # Then add any remaining hashtags
+                for tag in hashtags:
+                    if tag not in prioritized_hashtags and not any(skill in tag for skill in prioritized_hashtags):
+                        prioritized_hashtags.append(tag)
+                
+                # Replace the original hashtags with the prioritized ones
+                hashtags = prioritized_hashtags
+                
+                # If still no hashtags found, create one from the job title
+                if not hashtags:
+                    import re
+                    clean_title = re.sub(r'[^a-zA-Z0-9]', '', title)
+                    hashtags = [clean_title.lower()]
+                
+                # Get job URL
+                job_url = ""
+                # Try multiple approaches to find the apply link
+                # First try to find a direct link in the title
+                title_link = title_element.find_parent('a') if title_element else None
+                if title_link and title_link.get('href'):
+                    job_url = title_link.get('href')
+                    if not job_url.startswith('http'):
+                        job_url = 'https://www.naukri.com' + job_url
+                
+                # If no link found in title, try to find any link in the job card
+                if not job_url:
+                    links = target_job.find_all('a')
+                    for link in links:
+                        if link.get('href') and ('/job-listings/' in link.get('href') or '/job-detail/' in link.get('href')):
+                            job_url = link.get('href')
+                            if not job_url.startswith('http'):
+                                job_url = 'https://www.naukri.com' + job_url
+                            break
+                
+                # If still no link, try to find any link with job ID
+                if not job_url:
+                    links = target_job.find_all('a')
+                    for link in links:
+                        if link.get('href') and ('jobid=' in link.get('href') or 'jdUrl=' in link.get('href')):
+                            job_url = link.get('href')
+                            if not job_url.startswith('http'):
+                                job_url = 'https://www.naukri.com' + job_url
+                            break
+                
+                # Create job dictionary with all extracted information
+                # Generate a job_id from the title
+                import re
+                job_id = re.sub(r'[^a-zA-Z0-9]', '_', title.lower())
+                job_id = re.sub(r'_+', '_', job_id)  # Replace multiple underscores with a single one
+                job_id = job_id.strip('_')  # Remove leading/trailing underscores
+                
+                job = {
+                    'job_id': job_id,
+                    'title': title,
+                    'company': company,
+                    'experience': experience,
+                    'location': location,
+                    'job_role': job_role,
+                    'ctc': ctc,
+                    'hashtags': hashtags,
+                    'apply_link': job_url
+                }
+                
+                # Format message for Telegram with the specific order requested
+                # Format hashtags from the extracted skills
+                hashtag_str = ' '.join([f'#{tag.replace(" ", "")}' for tag in hashtags[:3]])  # Limit to first 3 hashtags
+                
+                message = f"""
+📌 Job Alert: {job['title']}
+🏢 Company: {job['company']}
+⏳ Experience: {job['experience']}
+📍 Location: {job['location']}
+💰 CTC: {job['ctc']}
+
+{hashtag_str}
+
+🔗 Apply Link: {job['apply_link']}
+                """
+                
+                # Send custom formatted message to Telegram
+                if scraper.telegram_token and scraper.channel_id:
+                    try:
+                        logger.info("Attempting to send message to Telegram")
+                        bot = Bot(token=scraper.telegram_token)
+                        await bot.send_message(
+                            chat_id=scraper.channel_id,
+                            text=message,
+                            parse_mode='Markdown',
+                            disable_web_page_preview=False
+                        )
+                        logger.info(f"Posted job to Telegram with custom format")
+                    except Exception as e:
+                        logger.error(f"Failed to send message to Telegram: {str(e)}")
+                        logger.info(f"Job details were extracted successfully: {job}")
+                        logger.info(f"Message that would have been sent:\n{message}")
+                else:
+                    logger.info("Telegram credentials not provided, skipping message")
+                
+                logger.info(f"Extracted job details: {job}")
+                return
+            
+            # If we couldn't find any job card, log the issue and return without posting
+            logger.warning("No job cards found on the page, no job information to post")
+            logger.info("Exiting without posting any job as no valid job data was extracted from the website")
+            
+            # Take a full page screenshot to help diagnose the issue
+            try:
+                await page.screenshot(path="no_jobs_found.png", timeout=10000, full_page=True)
+                logger.info("Saved full page screenshot to no_jobs_found.png")
+            except Exception as e:
+                logger.warning(f"Failed to take screenshot: {str(e)}")
+                
+            # Exit the function without posting anything
+            return
+            return
+            
+            # Take a screenshot to see what's on the page
+            try:
+                await page.screenshot(path="naukri_page.png", timeout=10000)
+                logger.info("Saved screenshot to naukri_page.png")
+            except Exception as e:
+                logger.warning(f"Failed to take screenshot: {str(e)}")
+                logger.info("Continuing without screenshot")
+            
+            # Wait for job listings to appear - try different selectors
+            try:
+                # Try multiple selectors that might contain job listings, starting with more specific ones
+                selectors = [
+                    '.jobTuple', 
+                    '.jobCard', 
+                    '.job-card', 
+                    '.joblist-comp', 
+                    '.list', 
+                    '.srp-jobtuple',
+                    'article.jobTupleWrapper',
+                    '.SRPstyle__NormalCardStyle-sc-1rnhgwh-0',
+                    'div[data-job-id]'
+                ]
+                
+                first_job_element = None
+                for selector in selectors:
+                    logger.info(f"Trying selector: {selector}")
+                    try:
+                        # Wait with a shorter timeout for each selector
+                        await page.wait_for_selector(selector, timeout=10000)
+                        first_job_element = await page.query_selector(selector)
+                        if first_job_element:
+                            logger.info(f"Found job element with selector: {selector}")
+                            break
+                    except Exception as e:
+                        logger.info(f"Selector {selector} not found: {str(e)}")
+                
+                # If no selectors worked, try getting page content
+                if not first_job_element:
+                    logger.info("No job elements found with standard selectors, analyzing page content")
+                    page_content = await page.content()
+                    with open("page_content.html", "w", encoding="utf-8") as f:
+                        f.write(page_content)
+                    logger.info("Saved page content to page_content.html")
+                    
+                    # Try to find any job-related elements in the page
+                    all_elements = await page.query_selector_all('a[href*="/job-listings"], a[href*="/job-detail"], div[class*="job"]')
+                    if all_elements:
+                        logger.info(f"Found {len(all_elements)} potential job-related elements")
+                        first_job_element = all_elements[0]
+                    
+                    # Use BeautifulSoup as a fallback to extract job information directly
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(page_content, 'html.parser')
+                    
+                    # Try to find job titles directly in the HTML with specific selectors for the Naukri.com layout
+                    job_titles = soup.select('.jobTupleHeader .title, h2.jobTitle, .title, h2, h3, .srpHdr, .list-job-title')
+                    if job_titles and not first_job_element:
+                        logger.info(f"Found {len(job_titles)} job titles using BeautifulSoup")
+                        # Create a simple dictionary to hold job info
+                        job = {
+                            'job_id': 'first_job',
+                            'title': job_titles[0].text.strip(),
+                            'company': 'Unknown Company',
+                            'location': 'Unknown Location',
+                            'posted_date': 'Unknown Date',
+                            'apply_link': ''
+                        }
+                        
+                        # Try to find the company name
+                        company_element = job_titles[0].find_parent().find_parent().select_one('.companyName, .company, [class*="company"]')
+                        if company_element:
+                            job['company'] = company_element.text.strip()
+                        
+                        # Try to find the job URL
+                        job_link = job_titles[0].find_parent('a') or job_titles[0].find('a')
+                        if job_link and job_link.get('href'):
+                            job['apply_link'] = job_link.get('href')
+                            if not job['apply_link'].startswith('http'):
+                                job['apply_link'] = 'https://www.naukri.com' + job['apply_link']
+                        
+                        # Post this job to Telegram
+                        await scraper.post_job_to_telegram(job)
+                        logger.info(f"Extracted first job using BeautifulSoup: {job['title']}")
+                        return
+                
+                if first_job_element:
+                    # Try different selectors for job details with more specific ones first
+                    title_selectors = [
+                        'h2.jobTitle', 
+                        '.jobTupleHeader .title', 
+                        '.info .title', 
+                        '.title', 
+                        'h2', 
+                        'h3', 
+                        'a[href*="/job-"]', 
+                        '[class*="title"]', 
+                        '[class*="job-title"]'
+                    ]
+                    company_selectors = ['.companyInfo a.subTitle', '.company', '[class*="company"]', '[class*="org"]']
+                    location_selectors = ['.locWdth span.ellipsis', '.location', '[class*="location"]', '[class*="loc"]']
+                    date_selectors = ['.fleft.postedDate', '.date', '[class*="date"]', '[class*="posted"]']
+                    
+                    # Extract job details using multiple possible selectors
+                    title_element = None
+                    for selector in title_selectors:
+                        title_element = await first_job_element.query_selector(selector)
+                        if title_element:
+                            logger.info(f"Found title with selector: {selector}")
+                            break
+                    
+                    company_element = None
+                    for selector in company_selectors:
+                        company_element = await first_job_element.query_selector(selector)
+                        if company_element:
+                            logger.info(f"Found company with selector: {selector}")
+                            break
+                    
+                    location_element = None
+                    for selector in location_selectors:
+                        location_element = await first_job_element.query_selector(selector)
+                        if location_element:
+                            logger.info(f"Found location with selector: {selector}")
+                            break
+                    
+                    posted_date_element = None
+                    for selector in date_selectors:
+                        posted_date_element = await first_job_element.query_selector(selector)
+                        if posted_date_element:
+                            logger.info(f"Found date with selector: {selector}")
+                            break
+                    
+                    # Try to find job URL
+                    job_url = None
+                    title_link = None
+                    
+                    # Try different approaches to get the job URL
+                    link_selectors = ['a.title', 'a[href*="/job-"]', 'a']
+                    for selector in link_selectors:
+                        title_link = await first_job_element.query_selector(selector)
+                        if title_link:
+                            job_url = await title_link.get_attribute('href')
+                            if job_url:
+                                logger.info(f"Found job URL with selector: {selector}")
+                                break
+                    
+                    # If we still don't have a URL but the element itself is a link
+                    if not job_url and await first_job_element.get_attribute('href'):
+                        job_url = await first_job_element.get_attribute('href')
+                        logger.info("Found job URL from the element itself")
+                    
+                    # Extract text content
+                    title = await title_element.inner_text() if title_element else "Unknown Title"
+                    company = await company_element.inner_text() if company_element else "Unknown Company"
+                    location = await location_element.inner_text() if location_element else "Unknown Location"
+                    posted_date = await posted_date_element.inner_text() if posted_date_element else "Unknown Date"
+                    
+                    # Create job object
+                    job = {
+                        'job_id': 'first_job',
+                        'title': title.strip(),
+                        'company': company.strip(),
+                        'location': location.strip(),
+                        'posted_date': posted_date.strip(),
+                        'apply_link': job_url,
+                        'category': 'IT',
+                        'timestamp': 'Now'
+                    }
+                    
+                    logger.info(f"Extracted first job: {job['title']} at {job['company']}")
+                    
+                    # Post the job to Telegram
+                    result = await scraper.post_job_to_telegram(job)
+                    
+                    if result:
+                        logger.info("✅ Successfully posted job to Telegram")
+                    else:
+                        logger.info("ℹ️ Job not posted to Telegram (expected if credentials are None)")
+                else:
+                    logger.warning("No job listings found")
+            except Exception as e:
+                logger.error(f"Error extracting job: {str(e)}")
+                
+    except Exception as e:
+        logger.error(f"❌ Test failed: {str(e)}")
+        raise
+
+# Run the script
+if __name__ == "__main__":
+    asyncio.run(extract_and_post_first_job())
