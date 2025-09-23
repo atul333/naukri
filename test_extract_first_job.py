@@ -107,9 +107,7 @@ async def extract_and_post_first_job():
             # Click on Sort by dropdown
             logger.info("Clicking on Sort by dropdown")
             try:
-                # Take a full page screenshot before attempting to find the sort dropdown
-                await page.screenshot(path="before_sort.png", full_page=True)
-                logger.info("Saved full page screenshot to before_sort.png")
+                # No need to save screenshot before sorting
                 
                 # Try multiple approaches to find and click the sort dropdown
                 # First try: Use evaluate to find and click the sort dropdown by text content
@@ -132,9 +130,7 @@ async def extract_and_post_first_job():
                     logger.info("Found and clicked sort dropdown using JavaScript")
                     await asyncio.sleep(3)  # Wait for dropdown to appear
                     
-                    # Take a full page screenshot after clicking the dropdown
-                    await page.screenshot(path="after_dropdown_click.png", full_page=True)
-                    logger.info("Saved full page screenshot to after_dropdown_click.png")
+                    # No need to save screenshot after clicking dropdown
                     
                     # Try to click on Date option using JavaScript
                     date_clicked = await page.evaluate("""
@@ -483,15 +479,21 @@ async def extract_and_post_first_job():
                 hashtag_str = ' '.join([f'#{tag.replace(" ", "")}' for tag in hashtags[:3]])  # Limit to first 3 hashtags
                 
                 message = f"""
-📌 Job Alert: {job['title']}
-🏢 Company: {job['company']}
-⏳ Experience: {job['experience']}
-📍 Location: {job['location']}
-💰 CTC: {job['ctc']}
+📌 *{job['title']}*
+
+🏢 *Company:* {job['company']}
+
+⏳ *Experience:* {job['experience']}
+
+📍 *Location:* {job['location']}
+
+💰 *CTC:* {job['ctc']}
+
+⏰ *Posted:* Just Now
 
 {hashtag_str}
 
-🔗 Apply Link: {job['apply_link']}
+🔗 *Apply Link:* {job['apply_link']}
                 """
                 
                 # Send custom formatted message to Telegram
@@ -717,6 +719,34 @@ async def extract_and_post_first_job():
         logger.error(f"❌ Test failed: {str(e)}")
         raise
 
-# Run the script
+# Run the script with scheduling
 if __name__ == "__main__":
-    asyncio.run(extract_and_post_first_job())
+    import schedule
+    import time
+    
+    def run_job():
+        """Run the job scraper"""
+        try:
+            logger.info("Running scheduled job scraper...")
+            asyncio.run(extract_and_post_first_job())
+            logger.info("Scheduled job completed successfully")
+        except Exception as e:
+            logger.error(f"Scheduled job failed: {str(e)}")
+    
+    # Run immediately on startup
+    logger.info("Running job scraper immediately on startup")
+    run_job()
+    
+    # Schedule to run every 5 minutes
+    logger.info("Setting up schedule to run every 5 minutes")
+    schedule.every(5).minutes.do(run_job)
+    
+    try:
+        # Keep the script running and check for scheduled jobs
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Scheduler stopped by user")
+    except Exception as e:
+        logger.error(f"Scheduler crashed: {str(e)}")
