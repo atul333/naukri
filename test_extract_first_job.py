@@ -397,35 +397,67 @@ async def extract_and_post_first_job():
                     clean_title = re.sub(r'[^a-zA-Z0-9]', '', title)
                     hashtags = [clean_title.lower()]
                 
-                # Get job URL
+                # Get job URL directly from the job card
                 job_url = ""
-                # Try multiple approaches to find the apply link
-                # First try to find a direct link in the title
-                title_link = title_element.find_parent('a') if title_element else None
-                if title_link and title_link.get('href'):
-                    job_url = title_link.get('href')
-                    if not job_url.startswith('http'):
-                        job_url = 'https://www.naukri.com' + job_url
                 
-                # If no link found in title, try to find any link in the job card
-                if not job_url:
-                    links = target_job.find_all('a')
-                    for link in links:
-                        if link.get('href') and ('/job-listings/' in link.get('href') or '/job-detail/' in link.get('href')):
-                            job_url = link.get('href')
+                # Try multiple approaches to find the job URL
+                # 1. Look for any link in the job card
+                links = target_job.find_all('a')
+                for link in links:
+                    if link.get('href'):
+                        href = link.get('href')
+                        # Check if this is a job detail link
+                        if any(pattern in href for pattern in ['/job-listings/', '/job-detail/', 'jobid=', 'jdUrl=']):
+                            job_url = href
                             if not job_url.startswith('http'):
                                 job_url = 'https://www.naukri.com' + job_url
+                            logging.info(f"Found job URL from link: {job_url}")
                             break
                 
-                # If still no link, try to find any link with job ID
-                if not job_url:
-                    links = target_job.find_all('a')
+                # 2. If no specific job link found, look for any link in the job card
+                if not job_url and links:
                     for link in links:
-                        if link.get('href') and ('jobid=' in link.get('href') or 'jdUrl=' in link.get('href')):
-                            job_url = link.get('href')
-                            if not job_url.startswith('http'):
-                                job_url = 'https://www.naukri.com' + job_url
+                        if link.get('href'):
+                            href = link.get('href')
+                            if href and not href.startswith('#') and not href.startswith('javascript:'):
+                                job_url = href
+                                if not job_url.startswith('http'):
+                                    job_url = 'https://www.naukri.com' + job_url
+                                logging.info(f"Found general URL from job card: {job_url}")
+                                break
+                
+                # 3. If still no link, try to extract job ID from any attribute and construct URL
+                if not job_url:
+                    # Look for job ID in any attribute
+                    job_id = None
+                    for tag in target_job.find_all():
+                        for attr_name, attr_value in tag.attrs.items():
+                            if isinstance(attr_value, str) and 'jobid' in attr_value.lower():
+                                # Try to extract job ID using regex
+                                import re
+                                match = re.search(r'jobid=([^&]+)', attr_value.lower())
+                                if match:
+                                    job_id = match.group(1)
+                                    break
+                        if job_id:
                             break
+                    
+                    # If job ID found, construct URL
+                    if job_id:
+                        job_url = f"https://www.naukri.com/job-detail/{job_id}"
+                        logging.info(f"Constructed job URL from job ID: {job_url}")
+                    else:
+                        # Try to construct URL from title
+                        job_url = f"https://www.naukri.com/job-listings?title={title.replace(' ', '+')}"
+                        logging.info(f"Constructed job URL from title: {job_url}")
+                
+                # If we have a job URL, use it as the apply link
+                if job_url:
+                    logging.info(f"Using job URL as apply link: {job_url}")
+                else:
+                    logging.warning("Could not find any job URL")
+                    job_url = f"https://www.naukri.com/job-listings?title={title.replace(' ', '+')}"
+                    logging.info(f"Using search URL as fallback: {job_url}")
                 
                 # Create job dictionary with all extracted information
                 # Generate a job_id from the title
