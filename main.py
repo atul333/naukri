@@ -881,12 +881,14 @@ class NaukriJobScraper:
             # Create a bot instance
             bot = Bot(token=self.telegram_token)
             
-            # Send the message
-            await bot.send_message(
+            # Send the message - use await correctly with the send_message method
+            # The send_message method returns a Message object, but we don't need to await it again
+            message = await bot.send_message(
                 chat_id=self.channel_id,
                 text=message_text,
                 parse_mode=parse_mode,
-                disable_web_page_preview=False
+                disable_web_page_preview=False,
+                protect_content=True  # Disable forwarding and copying of messages
             )
             
             logger.info(f"Sent message to Telegram")
@@ -896,15 +898,156 @@ class NaukriJobScraper:
             logger.error(f"Error sending to Telegram: {str(e)}")
             return False
     
+    def is_duplicate_job(self, job):
+        """Check if a job with the same details has been posted before"""
+        # Use a simple text file to store all job URLs that have been posted
+        # This is the most reliable way to prevent duplicates
+        posted_urls_file = "posted_job_urls.txt"
+        
+        # Create the file if it doesn't exist
+        if not os.path.exists(posted_urls_file):
+            with open(posted_urls_file, "w", encoding="utf-8") as f:
+                f.write("# This file contains all job URLs that have been posted to Telegram\n")
+        
+        # Check if this job URL has been posted before
+        job_url = job['apply_link']
+        
+        # Read all posted URLs
+        with open(posted_urls_file, "r", encoding="utf-8") as f:
+            posted_urls = f.read().splitlines()
+        
+        # If the URL is in the list, it's a duplicate
+        if job_url in posted_urls:
+            logger.info(f"Found duplicate job URL: {job_url}")
+            return True
+            
+        # Also check for similar jobs by title, company, and location
+        job_details_file = "job_details.json"
+        posted_jobs = {}
+        
+        if os.path.exists(job_details_file):
+            try:
+                with open(job_details_file, "r", encoding="utf-8") as f:
+                    posted_jobs = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                posted_jobs = {}
+        
+        # Check all jobs in our records to find similar ones
+        for key, stored_job in posted_jobs.items():
+            # Check if title, company, and location match
+            if (job['title'] == stored_job['title'] and 
+                job['company'] == stored_job['company']):
+                
+                logger.info(f"Found duplicate job with same title and company: {job['title']} at {job['company']}")
+                
+                # Add this URL to the posted URLs file to prevent future duplicates
+                with open(posted_urls_file, "a", encoding="utf-8") as f:
+                    f.write(f"{job_url}\n")
+                    
+                return True
+        
+        # Not a duplicate, store it and return False
+        self.store_job_details(job)
+        
+        # Add this URL to the posted URLs file
+        with open(posted_urls_file, "a", encoding="utf-8") as f:
+            f.write(f"{job_url}\n")
+            
+        return False
+        
+    def store_job_details(self, job):
+        """Store job details in a JSON file for reference and duplicate checking"""
+        job_details_file = "job_details.json"
+        
+        # Use the job URL as the unique key - this is the most reliable way to identify unique jobs
+        job_key = job['apply_link']
+        
+        # Prepare job details with all available information
+        job_details = {
+            "title": job['title'],
+            "company": job['company'],
+            "location": job['location'],
+            "experience": job.get('experience', 'Not specified'),
+            "posted_date": job['posted_date'],
+            "link": job['apply_link'],
+            "job_id": job.get('job_id', ''),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Read existing data
+        posted_jobs = {}
+        if os.path.exists(job_details_file):
+            try:
+                with open(job_details_file, "r", encoding="utf-8") as f:
+                    posted_jobs = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                # If file is empty or invalid, start with empty dict
+                posted_jobs = {}
+        
+        # Add new job
+        posted_jobs[job_key] = job_details
+        
+        # Write back to file
+        with open(job_details_file, "w", encoding="utf-8") as f:
+            json.dump(posted_jobs, f, indent=2, ensure_ascii=False)
+            
+        logger.info(f"Stored job details for: {job['title']} at {job['company']}, {job['location']}")
+        
+    def encrypt_job_url(self, url):
+        """Create a working encrypted URL for Naukri job listings"""
+        import hashlib
+        
+        # Extract the job ID from the URL if possible
+        import re
+        # Updated regex pattern to match various Naukri job URL formats
+        job_id_match = re.search(r'job-listings-.*?-(\d+)$', url)
+        
+        if job_id_match:
+            # If we can extract the job ID, use it directly
+            job_id = job_id_match.group(1)
+            # Create a working URL format that Naukri supports
+            return f"https://www.naukri.com/job-listings-{job_id}"
+        else:
+            # If we can't extract the job ID, return the original URL
+            # This ensures the link will always work
+            return url
+        
     async def post_job_to_telegram(self, job):
         """Post a job to the Telegram channel"""
+        # First check if this exact URL has been posted before
+        posted_urls_file = "posted_job_urls.txt"
+        
+        # Create the file if it doesn't exist
+        if not os.path.exists(posted_urls_file):
+            with open(posted_urls_file, "w", encoding="utf-8") as f:
+                f.write("# This file contains all job URLs that have been posted to Telegram\n")
+        
+        # Read all posted URLs
+        with open(posted_urls_file, "r", encoding="utf-8") as f:
+            posted_urls = f.read().splitlines()
+        
+        # If the URL is in the list, it's a duplicate - skip it
+        if job['apply_link'] in posted_urls:
+            logger.info(f"Skipping duplicate job URL: {job['apply_link']}")
+            return False
+            
+        # Also check for similar jobs using our improved method
+        if self.is_duplicate_job(job):
+            logger.info(f"Skipping duplicate job: {job['title']} at {job['company']}")
+            return False
+            
+        # Encrypt the job URL
+        encrypted_link = self.encrypt_job_url(job['apply_link'])
+        logger.info(f"Original link: {job['apply_link']}")
+        logger.info(f"Encrypted link: {encrypted_link}")
+            
         # Format message
         message = f"""
 📌 Job Alert: {job['title']}
 🏢 Company: {job['company']}
 📍 Location: {job['location']}
 🗓️ Posted: {job['posted_date']}
-🔗 Apply Here: {job['apply_link']}
+🔗 Apply Here: {encrypted_link}
 
 #Job #{job.get('category', 'Job')}
         """
@@ -919,9 +1062,51 @@ class NaukriJobScraper:
             logger.error(f"Error posting to Telegram: {str(e)}")
             return False
     
+    def cleanup_job_files(self):
+        """Clean up job storage files to prevent them from growing too large"""
+        # Clean up posted_job_urls.txt if it gets too large
+        posted_urls_file = "posted_job_urls.txt"
+        if os.path.exists(posted_urls_file):
+            with open(posted_urls_file, "r", encoding="utf-8") as f:
+                urls = f.readlines()
+            
+            # If we have more than 1000 URLs, keep only the most recent 500
+            if len(urls) > 1000:
+                logger.info(f"Cleaning up {posted_urls_file} - keeping only the most recent 500 URLs")
+                with open(posted_urls_file, "w", encoding="utf-8") as f:
+                    f.write("# This file contains all job URLs that have been posted to Telegram\n")
+                    f.writelines(urls[-500:])
+        
+        # Clean up job_details.json if it gets too large
+        job_details_file = "job_details.json"
+        if os.path.exists(job_details_file):
+            try:
+                with open(job_details_file, "r", encoding="utf-8") as f:
+                    posted_jobs = json.load(f)
+                
+                # If we have more than 1000 jobs, keep only the most recent 500
+                if len(posted_jobs) > 1000:
+                    logger.info(f"Cleaning up {job_details_file} - keeping only the most recent 500 jobs")
+                    # Sort jobs by timestamp (newest first)
+                    sorted_jobs = sorted(posted_jobs.items(), 
+                                        key=lambda x: x[1].get('timestamp', ''), 
+                                        reverse=True)
+                    
+                    # Keep only the most recent 500 jobs
+                    posted_jobs = dict(sorted_jobs[:500])
+                    
+                    # Write back to file
+                    with open(job_details_file, "w", encoding="utf-8") as f:
+                        json.dump(posted_jobs, f, indent=2, ensure_ascii=False)
+            except (json.JSONDecodeError, FileNotFoundError):
+                # If file is empty or invalid, ignore
+                pass
+    
     async def process_jobs(self):
         """Main process to scrape and post jobs"""
         try:
+            # Clean up job files to prevent them from growing too large
+            self.cleanup_job_files()
             # Scrape jobs
             logger.info("Starting job scraping")
             jobs = await self.scrape_jobs()
