@@ -2,9 +2,12 @@ import asyncio
 import logging
 import os
 import json
+import threading
+import sys
 from datetime import datetime
 from main import NaukriJobScraper
 from telegram import Bot
+from premium_bot import run_premium_bot, load_premium_users
 
 # Configure logging
 logging.basicConfig(
@@ -16,6 +19,150 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger('test_extract_first_job')
+
+async def send_job_to_matching_premium_users(job_title, message, telegram_token, job_experience=None, job_location=None):
+    """
+    Send job posts to premium users whose job title partially matches the post title,
+    whose experience falls within the job post's experience range,
+    and whose location preference matches the job location
+    
+    Args:
+        job_title (str): The title of the job post
+        message (str): The formatted job post message
+        telegram_token (str): Telegram bot token
+        job_experience (str, optional): The experience range from the job post (e.g., "4-9 Yrs")
+        job_location (str, optional): The location of the job post
+    """
+    try:
+        # Add detailed debug logs for the job post
+        logger.info("="*50)
+        logger.info(f"PROCESSING JOB POST FOR MATCHING")
+        logger.info(f"Job Title: '{job_title}'")
+        logger.info(f"Job Experience: '{job_experience}'")
+        logger.info("="*50)
+        
+        # Load premium users
+        premium_users = load_premium_users()
+        if not premium_users:
+            logger.info("No premium users found")
+            return
+        
+        logger.info(f"Found {len(premium_users)} premium users to check for matching")
+        
+        # Create bot instance
+        bot = Bot(token=telegram_token)
+        
+        # Convert job title to lowercase for case-insensitive matching
+        job_title_lower = job_title.lower()
+        logger.info(f"Job title (lowercase): '{job_title_lower}'")
+        
+        # Parse job experience range if provided
+        min_exp, max_exp = 0, 100  # Default to wide range if not specified
+        if job_experience:
+            try:
+                # Extract experience range (e.g., "4-9 Yrs" -> min=4, max=9)
+                exp_parts = job_experience.split('-')
+                if len(exp_parts) == 2:
+                    min_exp = int(float(exp_parts[0].strip()))
+                    max_exp = int(float(exp_parts[1].split()[0].strip()))
+                    logger.info(f"Parsed hyphenated range: {min_exp}-{max_exp} from '{job_experience}'")
+                elif "to" in job_experience.lower():
+                    exp_parts = job_experience.lower().split("to")
+                    min_exp = int(float(exp_parts[0].strip()))
+                    max_exp = int(float(exp_parts[1].split()[0].strip()))
+                    logger.info(f"Parsed 'to' range: {min_exp}-{max_exp} from '{job_experience}'")
+                else:
+                    logger.warning(f"Unrecognized experience format: '{job_experience}', using default range")
+                logger.info(f"Final job experience range: {min_exp}-{max_exp} years")
+            except Exception as e:
+                logger.warning(f"Failed to parse job experience range '{job_experience}': {str(e)}")
+                logger.info(f"Using default experience range: {min_exp}-{max_exp} years")
+        else:
+            logger.warning("No job experience provided, using default range")
+        
+        # Track matched users for logging
+        matched_users = []
+        
+        # Check each premium user
+        for user_id, user_data in premium_users.items():
+            # Only consider premium users
+            if user_data.get("is_premium", False):
+                # Get user's preferred job title, experience, and location
+                preferences = user_data.get("preferences", {})
+                user_job_title = preferences.get("job_title", "").lower()
+                user_experience_str = preferences.get("experience", "0")
+                user_location = preferences.get("location", "").lower()
+                
+                # Skip if user hasn't set a job title
+                if not user_job_title:
+                    continue
+                
+                # Parse user experience
+                try:
+                    user_experience = int(float(user_experience_str))
+                except (ValueError, TypeError):
+                    user_experience = 0
+                    logger.warning(f"Invalid experience value for user {user_id}: {user_experience_str}")
+                
+                # Check if user's job title matches AND experience is within range
+                logger.info(f"Checking user {user_id} with preferences: job_title='{user_job_title}', experience={user_experience}, location='{user_location}'")
+                
+                # Check if user's job title is in the full job title string
+                title_match_full = user_job_title in job_title_lower
+                
+                # Check if user's job title is a word in the job title or at the beginning of a word
+                words_in_job_title = job_title_lower.split()
+                title_match_word = any(word.startswith(user_job_title) for word in words_in_job_title)
+                
+                # Use either matching method
+                title_match = title_match_full or title_match_word
+                experience_match = min_exp <= user_experience <= max_exp
+                
+                # Check for location match
+                location_match = True  # Default to True if user hasn't specified a location
+                if user_location and job_location:
+                    # Convert job location to lowercase for case-insensitive matching
+                    job_location_lower = job_location.lower()
+                    # Check if user's location is in the job location
+                    location_match = user_location in job_location_lower
+                    logger.info(f"  - Job location: '{job_location_lower}'")
+                    logger.info(f"  - User location preference: '{user_location}'")
+                    logger.info(f"  - Location match: {location_match}")
+                
+                # Add comprehensive debug logging
+                logger.info(f"MATCH DETAILS for user {user_id}:")
+                logger.info(f"  - Job title: '{job_title_lower}'")
+                logger.info(f"  - User title preference: '{user_job_title}'")
+                logger.info(f"  - Words in job title: {words_in_job_title}")
+                logger.info(f"  - Title match (full string): {title_match_full}")
+                logger.info(f"  - Title match (word start): {title_match_word}")
+                logger.info(f"  - Final title match: {title_match}")
+                logger.info(f"  - User experience: {user_experience} years")
+                logger.info(f"  - Job experience range: {min_exp}-{max_exp} years")
+                logger.info(f"  - Experience match: {experience_match}")
+                logger.info(f"  - OVERALL MATCH: {title_match and experience_match and location_match}")
+                
+                if title_match and experience_match and location_match:
+                    try:
+                        # Send personalized message to the user
+                        personalized_message = f"🔔 *Job Alert Matching Your Preferences!*\n\n{message}"
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=personalized_message,
+                            parse_mode='Markdown'
+                        )
+                        matched_users.append(f"{user_data.get('username')} (job title: {user_job_title}, exp: {user_experience} yrs)")
+                        logger.info(f"Sent job alert to premium user {user_id} with matching job title '{user_job_title}' and experience {user_experience} yrs")
+                    except Exception as e:
+                        logger.error(f"Failed to send job alert to user {user_id}: {str(e)}")
+        
+        if matched_users:
+            logger.info(f"Job post '{job_title}' ({job_experience}) matched and sent to {len(matched_users)} premium users: {', '.join(matched_users)}")
+        else:
+            logger.info(f"No premium users with matching job titles and experience for '{job_title}' ({job_experience})")
+            
+    except Exception as e:
+        logger.error(f"Error in send_job_to_matching_premium_users: {str(e)}")
 
 async def extract_and_post_first_job():
     logger.info("Starting extraction of first job")
@@ -629,6 +776,15 @@ async def extract_and_post_first_job():
                 else:
                     logger.info("Telegram credentials not provided, skipping message")
                 
+                # Send job to premium users with matching job titles, experience, and location
+                # This happens regardless of Telegram success
+                logger.info(f"Sending job to premium users with title: '{title}', experience: '{experience}', and location: '{location}'")
+                try:
+                    await send_job_to_matching_premium_users(title, message, scraper.telegram_token, experience, location)
+                    logger.info("Successfully processed job for premium users")
+                except Exception as e:
+                    logger.error(f"Error sending job to premium users: {str(e)}")
+                
                 logger.info(f"Extracted job details: {job}")
                 return
             
@@ -838,6 +994,9 @@ if __name__ == "__main__":
     import schedule
     import time
     
+    # Create the Updater and pass it your bot's token
+    telegram_token = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+    
     def run_job():
         """Run the job scraper"""
         try:
@@ -846,6 +1005,11 @@ if __name__ == "__main__":
             logger.info("Scheduled job completed successfully")
         except Exception as e:
             logger.error(f"Scheduled job failed: {str(e)}")
+    
+    # Start premium bot directly (no need for threading)
+    logger.info("Starting premium bot...")
+    premium_bot_updater = run_premium_bot(telegram_token)
+    logger.info("Premium bot started")
     
     # Run immediately on startup
     logger.info("Running job scraper immediately on startup")
