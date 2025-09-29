@@ -1017,10 +1017,17 @@ class NaukriJobScraper:
         # First check if this exact URL has been posted before
         posted_urls_file = "posted_job_urls.txt"
         
-        # Create the file if it doesn't exist
+        # Counter file for tracking job posts for advertisement display
+        counter_file = "job_post_counter.txt"
+        
+        # Create the files if they don't exist
         if not os.path.exists(posted_urls_file):
             with open(posted_urls_file, "w", encoding="utf-8") as f:
                 f.write("# This file contains all job URLs that have been posted to Telegram\n")
+                
+        if not os.path.exists(counter_file):
+            with open(counter_file, "w", encoding="utf-8") as f:
+                f.write("0")
         
         # Read all posted URLs
         with open(posted_urls_file, "r", encoding="utf-8") as f:

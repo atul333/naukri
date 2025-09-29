@@ -9,9 +9,14 @@ from main import NaukriJobScraper
 from telegram import Bot
 from telegram.error import TimedOut, NetworkError
 from premium_bot import run_premium_bot, load_premium_users
+from advertisement import get_advertisement_message, get_alternative_ad_message
 
 # Use the actual token from the file
 TELEGRAM_TOKEN = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+
+# Counter for job posts to track when to show advertisement
+JOB_POST_COUNTER = 0
+AD_FREQUENCY = 10  # Show ad after every 10 posts
 
 # Configure logging
 logging.basicConfig(
@@ -985,6 +990,45 @@ async def extract_and_post_first_job():
                     
                     if result:
                         logger.info("✅ Successfully posted job to Telegram")
+                        
+                        # Update job post counter and check if it's time to show advertisement
+                        counter_file = "job_post_counter.txt"
+                        
+                        # Create counter file if it doesn't exist
+                        if not os.path.exists(counter_file):
+                            with open(counter_file, "w", encoding="utf-8") as f:
+                                f.write("0")
+                        
+                        try:
+                            # Read current counter
+                            with open(counter_file, "r", encoding="utf-8") as f:
+                                counter = int(f.read().strip())
+                            
+                            # Increment counter
+                            counter += 1
+                            
+                            # Write updated counter
+                            with open(counter_file, "w", encoding="utf-8") as f:
+                                f.write(str(counter))
+                            
+                            # Show advertisement after every 10 posts
+                            if counter % 10 == 0:
+                                from advertisement import get_advertisement_message, get_alternative_ad_message
+                                
+                                # Alternate between different ad messages
+                                ad_message = get_advertisement_message() if (counter // 10) % 2 == 0 else get_alternative_ad_message()
+                                
+                                # Send advertisement to channel
+                                bot = Bot(token=telegram_token)
+                                await bot.send_message(
+                                    chat_id=channel_id,
+                                    text=ad_message,
+                                    parse_mode='Markdown',
+                                    disable_web_page_preview=True
+                                )
+                                logger.info(f"✅ Advertisement posted to channel after {counter} job posts")
+                        except Exception as ad_error:
+                            logger.error(f"❌ Failed to handle advertisement: {str(ad_error)}")
                     else:
                         logger.info("ℹ️ Job not posted to Telegram (expected if credentials are None)")
                 else:
