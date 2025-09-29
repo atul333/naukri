@@ -7,7 +7,11 @@ import sys
 from datetime import datetime
 from main import NaukriJobScraper
 from telegram import Bot
+from telegram.error import TimedOut, NetworkError
 from premium_bot import run_premium_bot, load_premium_users
+
+# Use the actual token from the file
+TELEGRAM_TOKEN = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
 
 # Configure logging
 logging.basicConfig(
@@ -87,14 +91,14 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
         for user_id, user_data in premium_users.items():
             # Only consider premium users
             if user_data.get("is_premium", False):
-                # Get user's preferred job title, experience, and location
+                # Get user's preferred job keywords, experience, and location
                 preferences = user_data.get("preferences", {})
-                user_job_title = preferences.get("job_title", "").lower()
+                user_keywords = preferences.get("job_keywords", "").lower()
                 user_experience_str = preferences.get("experience", "0")
                 user_location = preferences.get("location", "").lower()
                 
-                # Skip if user hasn't set a job title
-                if not user_job_title:
+                # Skip if user hasn't set any keywords
+                if not user_keywords:
                     continue
                 
                 # Parse user experience
@@ -104,15 +108,18 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                     user_experience = 0
                     logger.warning(f"Invalid experience value for user {user_id}: {user_experience_str}")
                 
-                # Check if user's job title matches AND experience is within range
-                logger.info(f"Checking user {user_id} with preferences: job_title='{user_job_title}', experience={user_experience}, location='{user_location}'")
+                # Split user keywords by comma
+                keywords_list = [k.strip() for k in user_keywords.split(',') if k.strip()]
                 
-                # Check if user's job title is in the full job title string
-                title_match_full = user_job_title in job_title_lower
+                # Check if any of the user's keywords match the job title
+                logger.info(f"Checking user {user_id} with preferences: keywords='{user_keywords}', experience={user_experience}, location='{user_location}'")
                 
-                # Check if user's job title is a word in the job title or at the beginning of a word
+                # Check if any keyword is in the job title
+                title_match_full = any(keyword in job_title_lower for keyword in keywords_list)
+                
+                # Check if any keyword matches the beginning of a word in the job title
                 words_in_job_title = job_title_lower.split()
-                title_match_word = any(word.startswith(user_job_title) for word in words_in_job_title)
+                title_match_word = any(word.startswith(keyword) for keyword in keywords_list for word in words_in_job_title)
                 
                 # Use either matching method
                 title_match = title_match_full or title_match_word
@@ -132,7 +139,7 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                 # Add comprehensive debug logging
                 logger.info(f"MATCH DETAILS for user {user_id}:")
                 logger.info(f"  - Job title: '{job_title_lower}'")
-                logger.info(f"  - User title preference: '{user_job_title}'")
+                logger.info(f"  - User keywords: '{user_keywords}'")
                 logger.info(f"  - Words in job title: {words_in_job_title}")
                 logger.info(f"  - Title match (full string): {title_match_full}")
                 logger.info(f"  - Title match (word start): {title_match_word}")
@@ -151,8 +158,8 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                             text=personalized_message,
                             parse_mode='Markdown'
                         )
-                        matched_users.append(f"{user_data.get('username')} (job title: {user_job_title}, exp: {user_experience} yrs)")
-                        logger.info(f"Sent job alert to premium user {user_id} with matching job title '{user_job_title}' and experience {user_experience} yrs")
+                        matched_users.append(f"{user_data.get('username')} (keywords: {user_keywords}, exp: {user_experience} yrs)")
+                        logger.info(f"Sent job alert to premium user {user_id} with matching keywords '{user_keywords}' and experience {user_experience} yrs")
                     except Exception as e:
                         logger.error(f"Failed to send job alert to user {user_id}: {str(e)}")
         
@@ -994,8 +1001,8 @@ if __name__ == "__main__":
     import schedule
     import time
     
-    # Create the Updater and pass it your bot's token
-    telegram_token = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+    # Use the token defined at the top of the file
+    telegram_token = TELEGRAM_TOKEN
     
     def run_job():
         """Run the job scraper"""
@@ -1008,16 +1015,20 @@ if __name__ == "__main__":
     
     # Start premium bot directly (no need for threading)
     logger.info("Starting premium bot...")
-    premium_bot_updater = run_premium_bot(telegram_token)
-    logger.info("Premium bot started")
+    try:
+        premium_bot_updater = run_premium_bot(telegram_token)
+        logger.info("Premium bot started")
+    except (TimedOut, NetworkError) as e:
+        logger.warning(f"Telegram connection error: {e}. Continuing with other functionality.")
+        # Continue with the rest of the script without the bot
     
     # Run immediately on startup
     logger.info("Running job scraper immediately on startup")
     run_job()
     
-    # Schedule to run every 5 minutes
-    logger.info("Setting up schedule to run every 5 minutes")
-    schedule.every(5).minutes.do(run_job)
+    # Schedule to run every 5 seconds
+    logger.info("Setting up schedule to run every 5 seconds")
+    schedule.every(5).seconds.do(run_job)
     
     try:
         # Keep the script running and check for scheduled jobs

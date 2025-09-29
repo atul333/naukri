@@ -1,22 +1,22 @@
 {
   "7616678030": {
     "username": "SocialAdLinker",
-    "expiry_time": 1759043892.464829,
-    "is_premium": false,
+    "expiry_time": 4912776587.57676,
+    "is_premium": true,
     "preferences": {
-      "job_title": "Engineer",
-      "experience": "4",
-      "location": "Remote"
+      "job_keywords": "Mern, Python, devops",
+      "experience": "5",
+      "location": "Mumbai"
     }
   },
   "8047166560": {
     "username": "Channel_Owner_007",
-    "expiry_time": 1759044159.253722,
+    "expiry_time": 1759067176.51028,
     "is_premium": false,
     "preferences": {
-      "job_title": "Engineer",
-      "experience": "8",
-      "location": "Hyderabad"
+      "job_title": "Developer",
+      "experience": "5",
+      "location": "Pune"
     }
   }
 }
