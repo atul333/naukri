@@ -1071,8 +1071,8 @@ if __name__ == "__main__":
     run_job()
     
     # Schedule to run every 5 seconds
-    logger.info("Setting up schedule to run every 5 seconds")
-    schedule.every(5).seconds.do(run_job)
+    logger.info("Setting up schedule to run every 60 seconds")
+    schedule.every(60).seconds.do(run_job)
     
     try:
         # Keep the script running and check for scheduled jobs
