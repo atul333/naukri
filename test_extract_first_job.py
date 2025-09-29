@@ -4,6 +4,7 @@ import os
 import json
 import threading
 import sys
+import re
 from datetime import datetime
 from main import NaukriJobScraper
 from telegram import Bot
@@ -12,7 +13,7 @@ from premium_bot import run_premium_bot, load_premium_users
 from advertisement import get_advertisement_message, get_alternative_ad_message
 
 # Use the actual token from the file
-TELEGRAM_TOKEN = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+TELEGRAM_TOKEN = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
 
 # Counter for job posts to track when to show advertisement
 JOB_POST_COUNTER = 0
@@ -29,7 +30,7 @@ logging.basicConfig(
 
 logger = logging.getLogger('test_extract_first_job')
 
-async def send_job_to_matching_premium_users(job_title, message, telegram_token, job_experience=None, job_location=None):
+async def send_job_to_matching_premium_users(job_title, message, telegram_token, job_experience=None, job_location=None, job_url=None):
     """
     Send job posts to premium users whose job title partially matches the post title,
     whose experience falls within the job post's experience range,
@@ -41,6 +42,7 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
         telegram_token (str): Telegram bot token
         job_experience (str, optional): The experience range from the job post (e.g., "4-9 Yrs")
         job_location (str, optional): The location of the job post
+        job_url (str, optional): The URL of the job post
     """
     try:
         # Add detailed debug logs for the job post
@@ -116,7 +118,7 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                 # Split user keywords by comma
                 keywords_list = [k.strip() for k in user_keywords.split(',') if k.strip()]
                 
-                # Check if any of the user's keywords match the job title
+                # Check if any of the user's keywords match the job title or hashtags
                 logger.info(f"Checking user {user_id} with preferences: keywords='{user_keywords}', experience={user_experience}, location='{user_location}'")
                 
                 # Check if any keyword is in the job title
@@ -126,8 +128,81 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                 words_in_job_title = job_title_lower.split()
                 title_match_word = any(word.startswith(keyword) for keyword in keywords_list for word in words_in_job_title)
                 
-                # Use either matching method
-                title_match = title_match_full or title_match_word
+                # Extract hashtags from job details if available
+                hashtags_match = False
+                # Get job details from the job_details.json file
+                job_details_file = "job_details.json"
+                job_details = {}
+                
+                # Try to load job details for the current job URL
+                if os.path.exists(job_details_file):
+                    try:
+                        with open(job_details_file, 'r', encoding='utf-8') as f:
+                            all_job_details = json.load(f)
+                            # Get details for current job if available
+                            job_details = all_job_details.get(job_url, {})
+                            
+                            # If job_details is empty, try to find the job by title
+                            if not job_details and job_title:
+                                for url, details in all_job_details.items():
+                                    if details.get("title") == job_title:
+                                        job_details = details
+                                        logger.info(f"Found job details by title match: {job_title}")
+                                        break
+                    except Exception as e:
+                        logger.error(f"Error loading job details: {e}")
+                
+                # Get stored hashtags from job_details if available
+                stored_hashtags = job_details.get("hashtags", [])
+                logger.info(f"Job details found: {bool(job_details)}, Job URL: {job_url}, Title: {job_title}")
+                
+                # Process stored hashtags - remove # and convert to lowercase
+                # Check if any keyword matches any hashtag (more flexible matching)
+                hashtags_match = False
+                matching_hashtags = []
+                
+                # Only use stored hashtags from job_details.json for matching
+                if stored_hashtags:
+                    logger.info(f"  - Using hashtags from job_details.json")
+                    
+                    for keyword in keywords_list:
+                        keyword = keyword.lower().strip()
+                        for tag in stored_hashtags:
+                            # Remove # if present and convert to lowercase for comparison only
+                            clean_tag = tag[1:].lower() if tag.startswith('#') else tag.lower()
+                            if keyword in clean_tag or clean_tag in keyword:
+                                hashtags_match = True
+                                matching_hashtags.append(tag)  # Keep original hashtag for display
+                # If no stored hashtags, generate from job title
+                else:
+                    logger.info(f"  - No stored hashtags found, generating from job title")
+                    # Generate hashtags from job title words
+                    generated_hashtags = [word.lower() for word in words_in_job_title if len(word) > 2]
+                    # Add skills commonly associated with job titles
+                    if "developer" in job_title_lower or "engineer" in job_title_lower:
+                        generated_hashtags.extend(["programming", "coding", "development", "software"])
+                    if "full" in job_title_lower and "stack" in job_title_lower:
+                        generated_hashtags.extend(["frontend", "backend", "fullstack", "javascript", "react", "node"])
+                    if "devops" in job_title_lower:
+                        generated_hashtags.extend(["aws", "kubernetes", "docker", "terraform", "ansible", "cicd"])
+                    if "data" in job_title_lower:
+                        generated_hashtags.extend(["analytics", "bigdata", "python", "sql", "database"])
+                    
+                    # Match against generated hashtags
+                    for keyword in keywords_list:
+                        keyword = keyword.lower().strip()
+                        for tag in generated_hashtags:
+                            if keyword in tag or tag in keyword:
+                                hashtags_match = True
+                                matching_hashtags.append(tag)
+                
+                logger.info(f"  - Words in job title: {words_in_job_title}")
+                logger.info(f"  - Stored hashtags: {stored_hashtags}")
+                logger.info(f"  - Matching hashtags: {matching_hashtags}")
+                logger.info(f"  - Hashtag match: {hashtags_match}")
+                
+                # Use any matching method
+                title_match = title_match_full or title_match_word or hashtags_match
                 experience_match = min_exp <= user_experience <= max_exp
                 
                 # Check for location match
@@ -148,7 +223,8 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                 logger.info(f"  - Words in job title: {words_in_job_title}")
                 logger.info(f"  - Title match (full string): {title_match_full}")
                 logger.info(f"  - Title match (word start): {title_match_word}")
-                logger.info(f"  - Final title match: {title_match}")
+                logger.info(f"  - Hashtags match: {hashtags_match}")
+                logger.info(f"  - Final match (title or hashtags): {title_match}")
                 logger.info(f"  - User experience: {user_experience} years")
                 logger.info(f"  - Job experience range: {min_exp}-{max_exp} years")
                 logger.info(f"  - Experience match: {experience_match}")
@@ -180,7 +256,7 @@ async def extract_and_post_first_job():
     logger.info("Starting extraction of first job")
     
     # Initialize scraper with Telegram credentials
-    telegram_token = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+    telegram_token = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
     channel_id = "@job_opening_free"
     logger.info(f"Running with Telegram bot token and channel: {channel_id}")
     
@@ -754,6 +830,12 @@ async def extract_and_post_first_job():
                         logger.info(f"Skipping duplicate job: {title} at {company} with location {location} and experience {experience}")
                         return False
                 
+                # Extract hashtags from the message
+                hashtags = []
+                if "#" in message:
+                    # Extract all hashtags from the message
+                    hashtags = re.findall(r'#\w+', message)
+                
                 # Store this job in the job details file
                 job_details[job_url] = {
                     "title": title,
@@ -761,6 +843,7 @@ async def extract_and_post_first_job():
                     "location": location,
                     "experience": experience,
                     "posted_date": "Just Now",
+                    "hashtags": hashtags,
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -792,7 +875,8 @@ async def extract_and_post_first_job():
                 # This happens regardless of Telegram success
                 logger.info(f"Sending job to premium users with title: '{title}', experience: '{experience}', and location: '{location}'")
                 try:
-                    await send_job_to_matching_premium_users(title, message, scraper.telegram_token, experience, location)
+                    # Pass job_url as the last parameter
+                    await send_job_to_matching_premium_users(title, message, scraper.telegram_token, experience, location, job_url)
                     logger.info("Successfully processed job for premium users")
                 except Exception as e:
                     logger.error(f"Error sending job to premium users: {str(e)}")

@@ -4,19 +4,9 @@
     "expiry_time": 4912776587.57676,
     "is_premium": true,
     "preferences": {
-      "job_keywords": "Mern, Python, devops",
-      "experience": "5",
-      "location": "Mumbai"
-    }
-  },
-  "8047166560": {
-    "username": "Channel_Owner_007",
-    "expiry_time": 1759067176.51028,
-    "is_premium": false,
-    "preferences": {
-      "job_title": "Developer",
-      "experience": "5",
-      "location": "Pune"
+      "job_keywords": "Postgresql",
+      "experience": "6",
+      "location": "Delhi"
     }
   }
 }

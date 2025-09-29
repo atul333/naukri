@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 async def test_telegram_posting():
     """Test the Telegram posting functionality with sample data"""
     # Configuration
-    telegram_token = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+    telegram_token = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
     channel_id = "@job_opening_free"
     
     # Initialize scraper

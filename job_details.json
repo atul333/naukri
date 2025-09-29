@@ -326,5 +326,23 @@
     "experience": "5-10 Yrs",
     "posted_date": "Just Now",
     "timestamp": "2025-09-30T03:46:53.245552"
+  },
+  "https://www.naukri.com/job-listings-senior-full-stack-developer-wolt-partners-delhi-ncr-5-to-10-years-300925002046": {
+    "title": "Senior Full Stack Developer",
+    "company": "Wolt Partners",
+    "location": "Hybrid - Delhi / NCR",
+    "experience": "5-10 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#Postgresql",
+      "#MernStack",
+      "#Rest",
+      "#Node",
+      "#Microservices",
+      "#FullStack",
+      "#Angular",
+      "#Github"
+    ],
+    "timestamp": "2025-09-30T04:59:18.062109"
   }
 }

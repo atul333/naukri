@@ -7,7 +7,7 @@ def get_advertisement_message():
     Returns an energetic advertisement message for the Naukri bot
     """
     ad_message = """
-🚀 *Supercharge Your Job Search with @naukri7_bot!* 🚀
+🚀 *Supercharge Your Job Search with @Naukri_Job_Premium_bot!* 🚀
 
 ⚡️ Be the *FIRST* to apply for jobs on Naukri.com - completely FREE! ⚡️
 
@@ -19,7 +19,7 @@ def get_advertisement_message():
 
 🏆 *Stay ahead of the competition* - Apply before anyone else! 🏆
 
-👉 *Start now:* @naukri7_bot 👈
+👉 *Start now:* @Naukri_Job_Premium_bot 👈
     """
     return ad_message.strip()
 
@@ -31,7 +31,7 @@ def get_alternative_ad_message():
     alt_ad_message = """
 🔥 *TIRED OF MISSING OUT ON PERFECT JOB OPPORTUNITIES?* 🔥
 
-⏰ @naukri7_bot delivers Naukri.com jobs to you INSTANTLY! ⏰
+⏰ @Naukri_Job_Premium_bot delivers Naukri.com jobs to you INSTANTLY! ⏰
 
 ✅ Custom keyword filters
 ✅ Experience level matching
@@ -40,6 +40,6 @@ def get_alternative_ad_message():
 
 💯 *Never miss your dream job again!* 💯
 
-🤖 *Try it now:* @naukri7_bot
+🤖 *Try it now:* @Naukri_Job_Premium_bot
     """
     return alt_ad_message.strip()

@@ -219,6 +219,17 @@ def location(update: Update, context: CallbackContext) -> int:
 
 def show_countdown(user_id, bot, minutes):
     """Show countdown timer for premium membership"""
+    # Load premium users to check if this is a lifetime user
+    premium_users = load_premium_users()
+    
+    # Skip countdown for lifetime premium users
+    if user_id in premium_users and (
+        premium_users[user_id].get("is_lifetime", False) or 
+        premium_users[user_id].get("expiry_time", 0) == float('inf')
+    ):
+        logger.info(f"Skipping countdown for lifetime premium user {user_id}")
+        return
+    
     total_seconds = minutes * 60
     update_interval = 60  # Update every minute
     
@@ -491,22 +502,13 @@ def approve_payment(update: Update, context: CallbackContext):
     pending = premium_users[target_user_id]["pending_payment"]
     days = pending["days"]
     
-    # Calculate new expiry time
-    current_time = datetime.now()
-    
-    # If user already has an active premium membership, extend it
-    if target_user_id in premium_users and premium_users[target_user_id].get("is_premium", False):
-        current_expiry = datetime.fromtimestamp(premium_users[target_user_id]["expiry_time"])
-        if current_expiry > current_time:
-            new_expiry = current_expiry + timedelta(days=days)
-        else:
-            new_expiry = current_time + timedelta(days=days)
-    else:
-        new_expiry = current_time + timedelta(days=days)
-        premium_users[target_user_id]["is_premium"] = True
+    # Set premium membership to lifetime (using a very distant future date)
+    expiry_time = datetime.now() + timedelta(days=36500)  # ~100 years (effectively lifetime)
     
     # Update user's premium status
-    premium_users[target_user_id]["expiry_time"] = new_expiry.timestamp()
+    premium_users[target_user_id]["expiry_time"] = expiry_time.timestamp()
+    premium_users[target_user_id]["is_premium"] = True
+    premium_users[target_user_id]["is_lifetime"] = True  # Add lifetime flag
     premium_users[target_user_id]["pending_payment"]["status"] = "approved"
     premium_users[target_user_id]["pending_payment"]["approved_at"] = time.time()
     premium_users[target_user_id]["pending_payment"]["approved_by"] = username
@@ -517,8 +519,8 @@ def approve_payment(update: Update, context: CallbackContext):
     # Notify admin
     update.message.reply_text(
         f"✅ Payment approved for User ID: {target_user_id}\n"
-        f"Premium membership activated for {days} day{'s' if days > 1 else ''}.\n"
-        f"Expiry: {new_expiry.strftime('%Y-%m-%d %H:%M:%S')}"
+        f"Premium membership activated for LIFETIME.\n"
+        f"Expiry: {expiry_time.strftime('%Y-%m-%d %H:%M:%S')}"
     )
     
     # Notify user
@@ -526,15 +528,30 @@ def approve_payment(update: Update, context: CallbackContext):
         context.bot.send_message(
             chat_id=target_user_id,
             text=f"✅ *Payment Verified!*\n\n"
-                 f"Your premium membership has been activated for {days} day{'s' if days > 1 else ''}.\n"
-                 f"Expiry: {new_expiry.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                 f"Your premium membership has been activated for LIFETIME.\n"
                  f"You will now receive job alerts matching your preferences.",
             parse_mode='Markdown'
         )
     except Exception as e:
         logger.error(f"Failed to send approval notification to user {target_user_id}: {e}")
     
-    logger.info(f"Payment approved for user {target_user_id} - {days} days premium activated")
+    logger.info(f"Payment approved for user {target_user_id} - LIFETIME premium activated")
+
+def is_premium_user(user_id):
+    """Check if a user is a premium user"""
+    premium_users = load_premium_users()
+    
+    if user_id in premium_users:
+        # Check if premium and not expired
+        is_premium = premium_users[user_id].get("is_premium", False)
+        is_lifetime = premium_users[user_id].get("is_lifetime", False)
+        expiry_time = premium_users[user_id].get("expiry_time", 0)
+        
+        # Lifetime premium users never expire
+        if is_premium and (is_lifetime or time.time() < expiry_time):
+            return True
+    
+    return False
 
 def reject_payment(update: Update, context: CallbackContext):
     """Admin command to reject a payment"""
@@ -759,6 +776,17 @@ def keep_preferences(update: Update, context: CallbackContext) -> int:
 
 def send_expiry_notification(user_id, time_left):
     """Send notification about premium membership expiry"""
+    # Load premium users to check if this is a lifetime user
+    premium_users = load_premium_users()
+    
+    # Skip notifications for lifetime premium users
+    if user_id in premium_users and (
+        premium_users[user_id].get("is_lifetime", False) or 
+        premium_users[user_id].get("expiry_time", 0) == float('inf')
+    ):
+        logger.info(f"Skipping expiry notification for lifetime premium user {user_id}")
+        return
+    
     try:
         if time_left == "EXPIRED":
             # Create inline keyboard with renewal button
@@ -844,5 +872,5 @@ def run_premium_bot(telegram_token):
 
 if __name__ == "__main__":
     # Create the Updater and pass it your bot's token
-    telegram_token = "8348312063:AAH6DMUjtDfNaS2huKoALhVHUiK_8auMxbU"
+    telegram_token = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
     run_premium_bot(telegram_token)
