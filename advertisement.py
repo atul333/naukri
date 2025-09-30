@@ -1,13 +1,25 @@
 """
 Advertisement module for Naukri bot
 """
+import os
+import random
+import logging
+import asyncio
+from telegram import Bot
+
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 def get_advertisement_message():
     """
     Returns an energetic advertisement message for the Naukri bot
     """
     ad_message = """
-🚀 *Supercharge Your Job Search with @Naukri_Job_Premium_bot!* 🚀
+🚀 *Supercharge Your Job Search with aukri@N_Job_Premium_bot!* 🚀
 
 ⚡️ Be the *FIRST* to apply for jobs on Naukri.com - completely FREE! ⚡️
 
@@ -19,7 +31,7 @@ def get_advertisement_message():
 
 🏆 *Stay ahead of the competition* - Apply before anyone else! 🏆
 
-👉 *Start now:* @Naukri_Job_Premium_bot 👈
+👉 *Start now:* https://t.me/Naukri_Job_Premium_bot 👈
     """
     return ad_message.strip()
 
@@ -31,7 +43,7 @@ def get_alternative_ad_message():
     alt_ad_message = """
 🔥 *TIRED OF MISSING OUT ON PERFECT JOB OPPORTUNITIES?* 🔥
 
-⏰ @Naukri_Job_Premium_bot delivers Naukri.com jobs to you INSTANTLY! ⏰
+⏰ https://t.me/Naukri_Job_Premium_bot delivers Naukri.com jobs to you INSTANTLY! ⏰
 
 ✅ Custom keyword filters
 ✅ Experience level matching
@@ -40,6 +52,69 @@ def get_alternative_ad_message():
 
 💯 *Never miss your dream job again!* 💯
 
-🤖 *Try it now:* @Naukri_Job_Premium_bot
+🤖 *Try it now:* https://t.me/Naukri_Job_Premium_bot
     """
     return alt_ad_message.strip()
+
+def send_advertisement_to_channel(telegram_token, channel_id):
+    """
+    Sends an advertisement message to the specified Telegram channel
+    """
+    try:
+        # Choose a random advertisement message
+        ad_messages = [get_advertisement_message(), get_alternative_ad_message()]
+        ad_message = random.choice(ad_messages)
+        
+        # Create a bot instance
+        bot = Bot(token=telegram_token)
+        
+        # Send the advertisement to the channel - synchronous version
+        bot.send_message(
+            chat_id=channel_id,
+            text=ad_message,
+            parse_mode='Markdown',
+            disable_web_page_preview=True
+        )
+        
+        logger.info(f"Advertisement sent to channel {channel_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error sending advertisement: {str(e)}")
+        # Print more detailed error information for debugging
+        import traceback
+        logger.error(f"Detailed error: {traceback.format_exc()}")
+        return False
+
+def check_and_send_advertisement(telegram_token, channel_id):
+    """
+    Checks if an advertisement should be sent after a job posting
+    and sends it if conditions are met
+    """
+    counter_file = "job_post_counter.txt"
+    
+    # Create counter file if it doesn't exist
+    if not os.path.exists(counter_file):
+        with open(counter_file, "w", encoding="utf-8") as f:
+            f.write("0")
+    
+    # Read current counter value
+    with open(counter_file, "r", encoding="utf-8") as f:
+        try:
+            counter = int(f.read().strip())
+        except ValueError:
+            counter = 0
+    
+    # Increment counter
+    counter += 1
+    
+    # Write updated counter back to file
+    with open(counter_file, "w", encoding="utf-8") as f:
+        f.write(str(counter))
+    
+    # Send advertisement after exactly 1 successful job posting
+    if counter == 1:
+        logger.info("Sending advertisement after first successful job posting")
+        send_advertisement_to_channel(telegram_token, channel_id)
+        return True
+    
+    return False

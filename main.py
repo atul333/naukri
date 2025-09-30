@@ -1064,6 +1064,13 @@ class NaukriJobScraper:
             result = await self.send_telegram_message(message)
             if result:
                 logger.info(f"Posted job to Telegram: {job['title']}")
+                
+                # Import advertisement module here to avoid circular imports
+                from advertisement import check_and_send_advertisement
+                
+                # Send advertisement to channel only after successful job posting
+                await check_and_send_advertisement(self.telegram_token, self.channel_id)
+                
             return result
         except Exception as e:
             logger.error(f"Error posting to Telegram: {str(e)}")

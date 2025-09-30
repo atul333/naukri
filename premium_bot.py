@@ -85,19 +85,11 @@ def start(update: Update, context: CallbackContext) -> int:
         # Send welcome message
         update.message.reply_text(
             f"Welcome {username} to our premium membership! 🎉\n\n"
-                f"You have LIFETIME premium membership."
+                
         )
         
-        # Start countdown timer in a separate thread
-        countdown_thread = threading.Thread(
-            target=show_countdown, 
-            args=[user_id, context.bot, 10]
-        )
-        countdown_thread.daemon = True
-        countdown_thread.start()
-        
-        # Schedule expiry check
-        threading.Timer(600, check_and_expire_membership, args=[user_id, context.bot]).start()
+        # All premium memberships are now lifetime - no countdown or expiry check needed
+        logger.info(f"New user {username} ({user_id}) created with lifetime premium membership")
     
     # If user exists and has preferences, ask if they want to edit
     if has_preferences:
@@ -122,10 +114,20 @@ def start(update: Update, context: CallbackContext) -> int:
         )
         return EDIT_PREFERENCES
     else:
-        # Send separate message for job keywords prompt
+        # Send separate messages for job preferences setup
         context.bot.send_message(
             chat_id=user_id,
-            text="Let's set up your job preferences. 🔍 Please enter minimum 1 and maximum 5 keywords for your job search separated by commas (,):\n\nExample: developer,python,web,frontend,react 💻"
+            text="Let's set up your job preferences."
+        )
+        
+        context.bot.send_message(
+            chat_id=user_id,
+            text="🔍 Please enter minimum 1 and maximum 5 keywords for your job search separated by commas (,):"
+        )
+        
+        context.bot.send_message(
+            chat_id=user_id,
+            text="Example: developer,python,web,frontend,react 💻"
         )
         
         return TITLE
@@ -163,10 +165,10 @@ def job_title(update: Update, context: CallbackContext) -> int:
         premium_users[user_id]["preferences"]["job_keywords"] = keywords
         save_premium_users(premium_users)
     
-    update.message.reply_text(
-        f"🎯 Great! Your job keywords are set: {keywords}\n\n"
-        f"📊 Now, please tell me your total experience (in years):"
-    )
+    # Send separate messages
+    update.message.reply_text(f"🎯 Great! Your job keywords are set: {keywords}")
+    
+    update.message.reply_text(f"📊 Now, please tell me your total experience (in years):")
     
     return EXPERIENCE
 
@@ -183,10 +185,10 @@ def experience(update: Update, context: CallbackContext) -> int:
         premium_users[user_id]["preferences"]["experience"] = experience
         save_premium_users(premium_users)
     
-    update.message.reply_text(
-        f"Thanks! Your experience is set to: {experience} years\n\n"
-        f"Finally, please tell me your preferred job location:"
-    )
+    # Send separate messages
+    update.message.reply_text(f"Thanks! Your experience is set to: {experience} years")
+    
+    update.message.reply_text(f"Finally, please tell me your preferred job location:")
     
     return LOCATION
 
@@ -206,73 +208,33 @@ def location(update: Update, context: CallbackContext) -> int:
     # Get all preferences for confirmation
     preferences = premium_users[user_id]["preferences"]
     
+    # Send confirmation message
+    update.message.reply_text(f"Perfect! Your job preferences have been saved:")
+    
+    # Send detailed preferences
     update.message.reply_text(
-        f"Perfect! Your job preferences have been saved:\n\n"
         f"🔹 Job Keywords: {preferences['job_keywords']}\n"
         f"🔹 Experience: {preferences['experience']} years\n"
-        f"🔹 Location: {preferences['location']}\n\n"
+        f"🔹 Location: {preferences['location']}"
+    )
+    
+    # Send final message
+    update.message.reply_text(
         f"You will receive job alerts matching these keywords during your premium membership.\n"
-        f"Your premium membership will never expire - you have LIFETIME access."
+        
     )
     
     return ConversationHandler.END
 
 def show_countdown(user_id, bot, minutes):
     """Show countdown timer for premium membership"""
-    # Load premium users to check if this is a lifetime user
-    premium_users = load_premium_users()
-    
-    # Skip countdown for lifetime premium users
-    if user_id in premium_users and (
-        premium_users[user_id].get("is_lifetime", False) or 
-        premium_users[user_id].get("expiry_time", 0) == float('inf')
-    ):
-        logger.info(f"Skipping countdown for lifetime premium user {user_id}")
-        return
-    
-    total_seconds = minutes * 60
-    update_interval = 60  # Update every minute
-    
-    for remaining_seconds in range(total_seconds, 0, -update_interval):
-        remaining_minutes = remaining_seconds // 60
-        
-        if remaining_minutes in [5, 2, 1]:  # Show countdown at these specific times
-            try:
-                bot.send_message(
-                    chat_id=user_id,
-                    text=f"⏳ Your premium membership will expire in {remaining_minutes} minute{'s' if remaining_minutes > 1 else ''}!"
-                )
-            except Exception as e:
-                logger.error(f"Failed to send countdown notification to user {user_id}: {e}")
-        
-        time.sleep(update_interval)
+    # All premium memberships are now lifetime - no countdown needed
+    logger.info(f"Countdown disabled - all users have lifetime premium membership")
 
 def check_and_expire_membership(user_id, bot):
     """Check if membership has expired and notify user"""
-    premium_users = load_premium_users()
-    
-    if user_id in premium_users:
-        premium_users[user_id]["is_premium"] = False
-        save_premium_users(premium_users)
-        
-        try:
-            # Create inline keyboard with renewal option
-            keyboard = [
-                [InlineKeyboardButton("💰 Renew Membership", callback_data="renew_membership")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            bot.send_message(
-                chat_id=user_id,
-                text="⚠️ YOUR PREMIUM MEMBERSHIP HAS EXPIRED! ⚠️\n\n"
-                     "Your countdown has reached zero. Premium features are no longer available.\n\n"
-                     "To continue receiving job alerts matching your preferences, "
-                     "please renew your premium membership.",
-                reply_markup=reply_markup
-            )
-            logger.info(f"Premium membership expired for user {user_id}")
-        except Exception as e:
-            logger.error(f"Failed to send expiry notification to user {user_id}: {e}")
+    # All premium memberships are now lifetime - no expiration needed
+    logger.info(f"Membership expiration check disabled - all users have lifetime premium membership")
 
 def cancel(update: Update, context: CallbackContext) -> int:
     """Cancel and end the conversation."""
@@ -542,14 +504,13 @@ def is_premium_user(user_id):
     premium_users = load_premium_users()
     
     if user_id in premium_users:
-        # Check if premium and not expired
-        is_premium = premium_users[user_id].get("is_premium", False)
-        is_lifetime = premium_users[user_id].get("is_lifetime", False)
-        expiry_time = premium_users[user_id].get("expiry_time", 0)
-        
-        # Lifetime premium users never expire
-        if is_premium and (is_lifetime or time.time() < expiry_time):
-            return True
+        # All registered users are now lifetime premium
+        if not premium_users[user_id].get("is_premium", False):
+            premium_users[user_id]["is_premium"] = True
+            premium_users[user_id]["is_lifetime"] = True
+            premium_users[user_id]["expiry_time"] = float('inf')
+            save_premium_users(premium_users)
+        return True
     
     return False
 
@@ -697,26 +658,13 @@ def reject_payment(user_id, payment_ref, reason="Payment not received"):
 def check_expired_memberships():
     """Periodically check for expired memberships"""
     while True:
-        premium_users = load_premium_users()
-        current_time = datetime.now().timestamp()
-        
-        for user_id, user_data in premium_users.items():
-            if user_data.get("is_premium", False) and "expiry_time" in user_data:
-                expiry_time = user_data["expiry_time"]
-                time_left = expiry_time - current_time
-                
-                # Send notifications at specific intervals
-                if 300 <= time_left < 310:  # 5 minutes
-                    send_expiry_notification(user_id, "5 minutes")
-                elif 120 <= time_left < 130:  # 2 minutes
-                    send_expiry_notification(user_id, "2 minutes")
-                elif 60 <= time_left < 70:  # 1 minute
-                    send_expiry_notification(user_id, "1 minute")
-                elif time_left <= 0 and user_data.get("is_premium", False):
-                    # Mark as expired
-                    premium_users[user_id]["is_premium"] = False
-                    send_expiry_notification(user_id, "EXPIRED")
-                    logger.info(f"Premium membership expired for user {user_id}")
+        # All premium memberships are now lifetime - no expiration checks needed
+        logger.info("All premium memberships are now lifetime - no expiration checks needed")
+        # Sleep for a day before logging again
+        time.sleep(86400)
+        # All users are now lifetime premium - no expiration occurs
+        # No expiry notification needed
+        logger.info(f"All users have lifetime premium membership")
         
         save_premium_users(premium_users)
         time.sleep(60)  # Check every minute
@@ -776,19 +724,13 @@ def keep_preferences(update: Update, context: CallbackContext) -> int:
 
 def send_expiry_notification(user_id, time_left):
     """Send notification about premium membership expiry"""
-    # Load premium users to check if this is a lifetime user
-    premium_users = load_premium_users()
+    # All premium memberships are now lifetime - no expiry notifications needed
+    logger.info(f"Expiry notifications disabled - all users have lifetime premium membership")
+    return
     
-    # Skip notifications for lifetime premium users
-    if user_id in premium_users and (
-        premium_users[user_id].get("is_lifetime", False) or 
-        premium_users[user_id].get("expiry_time", 0) == float('inf')
-    ):
-        logger.info(f"Skipping expiry notification for lifetime premium user {user_id}")
-        return
-    
+    # The code below is no longer used since all memberships are lifetime
     try:
-        if time_left == "EXPIRED":
+        if False:  # This condition will never be true
             # Create inline keyboard with renewal button
             keyboard = [
                 [InlineKeyboardButton("💰 Renew Membership", callback_data="renew_membership")]

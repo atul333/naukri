@@ -344,5 +344,150 @@
       "#Github"
     ],
     "timestamp": "2025-09-30T04:59:18.062109"
+  },
+  "https://www.naukri.com/job-listings-site-reliability-engineer-aws-idox-pune-2-to-5-years-011025000042": {
+    "title": "Site Reliability Engineer (AWS)",
+    "company": "Idox",
+    "location": "Pune(Kalyani Nagar)",
+    "experience": "2-5 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#Ci",
+      "#Bash",
+      "#Terraform",
+      "#Site",
+      "#Docker",
+      "#Kubernetes",
+      "#ContinuousIntegration",
+      "#AWS"
+    ],
+    "timestamp": "2025-10-01T00:28:32.064304"
+  },
+  "https://www.naukri.com/job-listings-fullstack-lead-v3-staffing-gurugram-5-to-9-years-011025000073": {
+    "title": "Fullstack Lead",
+    "company": "Top Product based company",
+    "location": "Hybrid - Gurugram",
+    "experience": "5-9 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#React",
+      "#Java",
+      "#Ci",
+      "#GCP",
+      "#Node",
+      "#Docker",
+      "#Typescript"
+    ],
+    "timestamp": "2025-10-01T00:30:08.812963"
+  },
+  "https://www.naukri.com/job-listings-azure-data-engineer-lead-azure-data-engineer-epam-systems-hyderabad-pune-bengaluru-5-to-10-years-120825035854": {
+    "title": "Azure Data Engineer/Lead Azure Data Engineer",
+    "company": "Epam Systems",
+    "location": "Hybrid - Hyderabad, Pune, Bengaluru",
+    "experience": "5-10 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#MicrosoftAzure",
+      "#Pyspark",
+      "#SynapseAnalytics",
+      "#Fabric",
+      "#Factory",
+      "#Data",
+      "#AzureDataFactory",
+      "#Analytics",
+      "#AzureDataEngineer",
+      "#LeadAzureDataEngineer"
+    ],
+    "timestamp": "2025-10-01T00:31:45.968172"
+  },
+  "https://www.naukri.com/job-listings-cai-platform-architect-tvm-pune-4-days-wfo-in-a-month-starlight-hr-consulting-pune-thiruvananthapuram-8-to-13-years-011025001126": {
+    "title": "CAI Platform Architect __ TVM, PUNE_4 days WFO in a month",
+    "company": "Starlight Hr Consulting",
+    "location": "Hybrid - Pune, Thiruvananthapuram",
+    "experience": "8-13 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#Python",
+      "#Cognigy",
+      "#Architecture",
+      "#CAI",
+      "#Wfo",
+      "#ConversationalAi",
+      "#ArtificialIntelligence",
+      "#devops"
+    ],
+    "timestamp": "2025-10-01T03:26:10.432362"
+  },
+  "https://www.naukri.com/job-listings-ai-engineer-votal-ai-bangalore-rural-0-to-2-years-011025001154": {
+    "title": "AI Engineer",
+    "company": "Votal Ai",
+    "location": "Bangalore Rural",
+    "experience": "0-2 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#vlm",
+      "#ts",
+      "#modeleval",
+      "#postgres",
+      "#llm",
+      "#Javascript",
+      "#js",
+      "#apidesign"
+    ],
+    "timestamp": "2025-10-01T03:29:18.793238"
+  },
+  "https://www.naukri.com/job-listings-java-support-engineer-bounteous-x-accolite-bangalore-rural-bengaluru-5-to-8-years-230925027227": {
+    "title": "Java Support Engineer",
+    "company": "Bounteous x Accolite",
+    "location": "Hybrid - Bangalore Rural, Bengaluru",
+    "experience": "5-8 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#Linux",
+      "#JavaApplicationSupport",
+      "#Java",
+      "#JavaProductionSupport",
+      "#ApplicationSupport",
+      "#ShellScripting",
+      "#JavaSupport",
+      "#Unix"
+    ],
+    "timestamp": "2025-10-01T03:46:18.320009"
+  },
+  "https://www.naukri.com/job-listings-workday-finance-bb-works-new-delhi-hyderabad-chennai-8-to-13-years-110925035973": {
+    "title": "Workday Finance",
+    "company": "Top Source Consulting Services",
+    "location": "New Delhi, Hyderabad, Chennai",
+    "experience": "8-13 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#WorkdayFinanceCore",
+      "#Finance",
+      "#Core",
+      "#WorkdayFunctional",
+      "#CoreFinance",
+      "#Workday",
+      "#Technical",
+      "#WorkdayTechnical"
+    ],
+    "timestamp": "2025-10-01T03:47:54.641255"
+  },
+  "https://www.naukri.com/job-listings-fullstack-developer-infliq-network-hyderabad-5-to-10-years-011025001811": {
+    "title": "Fullstack Developer",
+    "company": "Infliq Network",
+    "location": "Hyderabad",
+    "experience": "5-10 Yrs",
+    "posted_date": "Just Now",
+    "hashtags": [
+      "#ReactNative",
+      "#React",
+      "#Node",
+      "#MicroservicesDevelopment",
+      "#Development",
+      "#Native",
+      "#Expresjs",
+      "#FullstackDevelopment"
+    ],
+    "timestamp": "2025-10-01T04:53:45.307083"
   }
 }

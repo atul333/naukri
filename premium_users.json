@@ -1,12 +1,12 @@
 {
   "7616678030": {
     "username": "SocialAdLinker",
-    "expiry_time": 4912776587.57676,
+    "expiry_time": 4912870452.400216,
     "is_premium": true,
     "preferences": {
-      "job_keywords": "Postgresql",
-      "experience": "6",
-      "location": "Delhi"
+      "job_keywords": "Devops, AWS, kubernetes, Terraform, ansible",
+      "experience": "4",
+      "location": "Mumbai"
     }
   }
 }
