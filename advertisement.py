@@ -19,19 +19,19 @@ def get_advertisement_message():
     Returns an energetic advertisement message for the Naukri bot
     """
     ad_message = """
-🚀 *Supercharge Your Job Search with aukri@N_Job_Premium_bot!* 🚀
+🚀 <b>Supercharge Your Job Search with aukri@N_Job_Premium_bot!</b>
 
-⚡️ Be the *FIRST* to apply for jobs on Naukri.com - completely FREE! ⚡️
+⚡️ Be the <b>FIRST</b> to apply for jobs on Naukri com - completely FREE!
 
-✨ *Why use our bot?* ✨
+✨ <b>Why use our bot?</b> ✨
 🔍 Filter jobs by keywords that matter to YOU
 💼 Set your experience level for perfect matches
 📍 Choose your preferred locations
 🔔 Get instant notifications for new openings
 
-🏆 *Stay ahead of the competition* - Apply before anyone else! 🏆
+🏆 <b>Stay ahead of the competition</b> - Apply before anyone else! 🏆
 
-👉 *Start now:* https://t.me/Naukri_Job_Premium_bot 👈
+👉 <b>Start now:</b> <a href="https://t.me/Naukri_Job_Premium_bot">https://t.me/Naukri_Job_Premium_bot</a> 👈
     """
     return ad_message.strip()
 
@@ -41,18 +41,18 @@ def get_alternative_ad_message():
     Returns an alternative advertisement message
     """
     alt_ad_message = """
-🔥 *TIRED OF MISSING OUT ON PERFECT JOB OPPORTUNITIES?* 🔥
+🔥 <b>FREE PRIMIUM BOT WITH JOB FILTER</b>
 
-⏰ https://t.me/Naukri_Job_Premium_bot delivers Naukri.com jobs to you INSTANTLY! ⏰
+⏰ <a href="https://t.me/Naukri_Job_Premium_bot">https://t.me/Naukri_Job_Premium_bot</a> delivers Naukri com jobs to you INSTANTLY! ⏰
 
 ✅ Custom keyword filters
 ✅ Experience level matching
 ✅ Location preferences
 ✅ 100% FREE to use!
 
-💯 *Never miss your dream job again!* 💯
+💯 <b>Never miss your dream job again!</b> 💯
 
-🤖 *Try it now:* https://t.me/Naukri_Job_Premium_bot
+🤖 <b>Try it now:</b> <a href="https://t.me/Naukri_Job_Premium_bot">https://t.me/Naukri_Job_Premium_bot</a>
     """
     return alt_ad_message.strip()
 
@@ -72,7 +72,7 @@ def send_advertisement_to_channel(telegram_token, channel_id):
         bot.send_message(
             chat_id=channel_id,
             text=ad_message,
-            parse_mode='Markdown',
+            parse_mode='HTML',
             disable_web_page_preview=True
         )
         

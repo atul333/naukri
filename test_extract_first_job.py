@@ -5,12 +5,13 @@ import json
 import threading
 import sys
 import re
+import time
 from datetime import datetime
 from main import NaukriJobScraper
 from telegram import Bot
 from telegram.error import TimedOut, NetworkError
 from premium_bot import run_premium_bot, load_premium_users
-from advertisement import check_and_send_advertisement
+from advertisement import check_and_send_advertisement, send_advertisement_to_channel
 
 # Use the actual token from the file
 TELEGRAM_TOKEN = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
@@ -1074,7 +1075,10 @@ async def extract_and_post_first_job():
                         # Send advertisement to channel after successful job posting
                         check_and_send_advertisement(telegram_token, channel_id)
                         
-                        # No additional code needed here as advertisement is handled by check_and_send_advertisement
+                        # Direct call to send advertisement to ensure it appears after each post
+                        from advertisement import send_advertisement_to_channel
+                        send_advertisement_to_channel(telegram_token, channel_id)
+                        logger.info("✅ Advertisement sent directly after job post")
                     else:
                         logger.info("ℹ️ Job not posted to Telegram (expected if credentials are None)")
                 else:
@@ -1093,6 +1097,7 @@ if __name__ == "__main__":
     
     # Use the token defined at the top of the file
     telegram_token = TELEGRAM_TOKEN
+    channel_id = "@job_opening_free"
     
     def run_job():
         """Run the job scraper"""
@@ -1102,6 +1107,18 @@ if __name__ == "__main__":
             logger.info("Scheduled job completed successfully")
         except Exception as e:
             logger.error(f"Scheduled job failed: {str(e)}")
+    
+    def post_advertisement():
+        """Post advertisement to channel"""
+        try:
+            logger.info("Posting scheduled advertisement to channel...")
+            result = send_advertisement_to_channel(telegram_token, channel_id)
+            if result:
+                logger.info("✅ Advertisement posted successfully")
+            else:
+                logger.error("❌ Failed to post advertisement")
+        except Exception as e:
+            logger.error(f"Advertisement posting failed: {str(e)}")
     
     # Start premium bot directly (no need for threading)
     logger.info("Starting premium bot...")
@@ -1116,9 +1133,17 @@ if __name__ == "__main__":
     logger.info("Running job scraper immediately on startup")
     run_job()
     
-    # Schedule to run every 5 seconds
-    logger.info("Setting up schedule to run every 60 seconds")
+    # Post advertisement immediately
+    logger.info("Posting advertisement immediately on startup")
+    post_advertisement()
+    
+    # Schedule job scraper to run every 60 seconds
+    logger.info("Setting up schedule to run job scraper every 60 seconds")
     schedule.every(60).seconds.do(run_job)
+    
+    # Schedule advertisement to run every 1 minute
+    logger.info("Setting up schedule to post advertisement every 1 minute")
+    schedule.every(60).minutes.do(post_advertisement)
     
     try:
         # Keep the script running and check for scheduled jobs
