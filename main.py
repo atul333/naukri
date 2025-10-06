@@ -13,6 +13,7 @@ import time
 import aiohttp
 import json
 import re
+import tempfile
 
 # Configure logging
 logging.basicConfig(
@@ -21,6 +22,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Ensure a valid temp directory exists for Playwright when running main.py directly
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+SAFE_TMP = os.path.join(BASE_DIR, "playwright_tmp")
+
+try:
+    os.makedirs(SAFE_TMP, exist_ok=True)
+    os.environ['TMP'] = SAFE_TMP
+    os.environ['TEMP'] = SAFE_TMP
+    os.environ['TMPDIR'] = SAFE_TMP
+    # sanity check
+    fd, test_tmp_path = tempfile.mkstemp(dir=SAFE_TMP)
+    os.close(fd)
+    os.remove(test_tmp_path)
+    logger.info(f"Playwright temp dir set to: {SAFE_TMP}")
+except Exception as env_err:
+    logger.warning(f"Failed to initialize safe temp path in main.py: {env_err}")
 class NaukriJobScraper:
     def __init__(self, telegram_token, channel_id):
         self.job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch"

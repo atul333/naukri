@@ -12,6 +12,7 @@ from telegram import Bot
 from telegram.error import TimedOut, NetworkError
 from premium_bot import run_premium_bot, load_premium_users
 from advertisement import check_and_send_advertisement, send_advertisement_to_channel
+import tempfile
 
 # Use the actual token from the file
 TELEGRAM_TOKEN = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
@@ -26,6 +27,27 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger('test_extract_first_job')
+
+# Ensure a valid temp directory exists for Playwright on servers with restricted user Temp paths
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+SAFE_TMP = os.path.join(BASE_DIR, "playwright_tmp")
+SAFE_BROWSERS = os.path.join(BASE_DIR, "pw-browsers")
+
+try:
+    os.makedirs(SAFE_TMP, exist_ok=True)
+    os.makedirs(SAFE_BROWSERS, exist_ok=True)
+    # Only set TEMP-related envs to avoid triggering browser re-downloads
+    os.environ['TMP'] = SAFE_TMP
+    os.environ['TEMP'] = SAFE_TMP
+    os.environ['TMPDIR'] = SAFE_TMP
+    # quick sanity check to verify temp path works
+    fd, test_tmp_path = tempfile.mkstemp(dir=SAFE_TMP)
+    os.close(fd)
+    os.remove(test_tmp_path)
+    logger.info(f"Playwright temp dir set to: {SAFE_TMP}")
+    # Skipping PLAYWRIGHT_BROWSERS_PATH override to use default installed browsers
+except Exception as env_err:
+    logger.warning(f"Failed to initialize safe temp/browsers paths: {env_err}")
 
 async def send_job_to_matching_premium_users(job_title, message, telegram_token, job_experience=None, job_location=None, job_url=None):
     """
@@ -1142,7 +1164,7 @@ if __name__ == "__main__":
     schedule.every(60).seconds.do(run_job)
     
     # Schedule advertisement to run every 1 minute
-    logger.info("Setting up schedule to post advertisement every 1 minute")
+    logger.info("Setting up schedule to post advertisement every 60 minute")
     schedule.every(60).minutes.do(post_advertisement)
     
     try:
