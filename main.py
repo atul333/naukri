@@ -1072,7 +1072,7 @@ class NaukriJobScraper:
                 from advertisement import check_and_send_advertisement
                 
                 # Send advertisement to channel only after successful job posting
-                await check_and_send_advertisement(self.telegram_token, self.channel_id)
+                check_and_send_advertisement(self.telegram_token, self.channel_id)
                 
             return result
         except Exception as e:
