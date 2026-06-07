@@ -640,135 +640,119 @@ class NaukriJobScraper:
                             retry_count += 1
                             await asyncio.sleep(random.uniform(5, 10))
                             continue
+                    
+                    # === JOB EXTRACTION — runs after successful navigation ===
+                    if success:
+                        try:
+                            page_content = await page.content()
+                            soup = BeautifulSoup(page_content, 'html.parser')
                             
-                            # Take a screenshot after navigation for debugging
-                            await page.screenshot(path=f"after_{category_name}_attempt_{retry_count + 1}.png")
-                            
-                            # Simulate more human-like behavior after navigation
-                            await self.simulate_human_behavior(page)
-                            
-                            # Check if we got blocked (403 or 429 status)
-                            if response.status in [403, 429]:
-                                logger.warning(f"Access denied (status {response.status}) for {category_name}, retry {retry_count+1}/{max_retries}")
-                                # Take a screenshot of the potential captcha page
-                                captcha_screenshot_path = f"captcha_{category_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
-                                await page.screenshot(path=captcha_screenshot_path)
-                                logger.warning(f"Possible CAPTCHA detected. Screenshot saved to {captcha_screenshot_path}")
-                                
-                                # Check if there's text indicating a captcha
-                                page_content = await page.content()
-                                if 'captcha' in page_content.lower() or 'robot' in page_content.lower() or 'human' in page_content.lower():
-                                    logger.error(f"CAPTCHA detected on page for {category_name}")
-                                    
-                                    # Send notification via Telegram if configured
-                                    if self.telegram_bot_token and self.telegram_chat_id:
-                                        captcha_message = f"⚠️ CAPTCHA detected while scraping {category_name} jobs. Manual intervention required."
-                                        await self.send_telegram_message(captcha_message)
-                                        
-                                        # If in non-headless mode, wait for manual CAPTCHA solving
-                                        if not headless_mode:
-                                            logger.info("Waiting for manual CAPTCHA solving (60 seconds)...")
-                                            # Wait for a minute to allow manual solving
-                                            await asyncio.sleep(60)
-                                            logger.info("Continuing after CAPTCHA wait period")
-                                    else:
-                                        logger.warning("Telegram not configured for CAPTCHA notifications")
-                                retry_count += 1
-                                # Add longer delay on 403/429 errors
-                                await asyncio.sleep(random.uniform(15, 30))
-                                continue
-                            
-                            if not response.ok:
-                                logger.error(f"Failed to load page for {category_name}: {response.status}, retry {retry_count+1}/{max_retries}")
-                                retry_count += 1
-                                continue
-                            
-                            # Wait for content to load with increased timeout
-                            try:
-                                await page.wait_for_selector('.jobTuple', timeout=45000)
-                            except Exception as e:
-                                logger.warning(f"Timeout waiting for job listings: {str(e)}")
-                                await page.screenshot(path=f"timeout_{category_name}_attempt_{retry_count + 1}.png")
-                                retry_count += 1
-                                continue
-                            
-                            # Extract job listings
-                            job_elements = await page.query_selector_all('.jobTuple')
-                            logger.info(f"Found {len(job_elements)} job listings for {category_name}")
-                            
-                            if not job_elements:
-                                logger.warning(f"No job elements found for {category_name}, retry {retry_count+1}/{max_retries}")
-                                retry_count += 1
-                                continue
+                            # Modern Naukri.com selectors (2024-25)
+                            job_cards = soup.select(
+                                '.srp-jobtuple-wrapper, '
+                                'article.jobTupleWrapper, '
+                                '.jobTuple, '
+                                '[class*="srp-jobtuple"], '
+                                '[class*="NormalCard"], '
+                                'div[data-job-id]'
+                            )
+                            logger.info(f"Found {len(job_cards)} job cards for {category_name}")
                             
                             category_jobs = []
-                            for job_element in job_elements:
+                            for job_card in job_cards[:20]:
                                 try:
-                                    # Extract job details
-                                    title_element = await job_element.query_selector('.title')
-                                    company_element = await job_element.query_selector('.companyInfo a.subTitle')
-                                    location_element = await job_element.query_selector('.locWdth span.ellipsis')
-                                    experience_element = await job_element.query_selector('.ellipsis.fleft.fs12.lh16')
-                                    posted_date_element = await job_element.query_selector('.fleft.postedDate')
+                                    # Title
+                                    title_el = job_card.select_one(
+                                        '.title, .job-title, [class*="title"], h2, h3'
+                                    )
+                                    if not title_el:
+                                        continue
+                                    title = title_el.text.strip()
                                     
-                                    # Get job link
-                                    title_link = await job_element.query_selector('a.title')
-                                    job_url = await title_link.get_attribute('href')
+                                    # Company
+                                    comp_el = job_card.select_one(
+                                        '.companyName, .company, [class*="company"], '
+                                        '.subTitle, [class*="subTitle"], .comp-name'
+                                    )
+                                    company = comp_el.text.strip() if comp_el else "Unknown Company"
+                                    if "Reviews" in company:
+                                        company = company.split("Reviews")[0].strip()
+                                    import re as _re
+                                    company = _re.sub(r'\d+\.?\d*$', '', company).strip()
                                     
-                                    # Extract text content
-                                    title = await title_element.inner_text() if title_element else "Unknown Title"
-                                    company = await company_element.inner_text() if company_element else "Unknown Company"
-                                    location = await location_element.inner_text() if location_element else "Unknown Location"
-                                    posted_date = await posted_date_element.inner_text() if posted_date_element else "Unknown Date"
+                                    # Experience
+                                    exp_el = job_card.select_one(
+                                        '.expwdth, [class*="experience"], [class*="exp"]'
+                                    )
+                                    experience = exp_el.text.strip() if exp_el else "Not specified"
                                     
-                                    # Generate a unique job ID
-                                    job_id = f"job_{hashlib.md5(job_url.encode()).hexdigest()}"
+                                    # Location
+                                    loc_el = job_card.select_one(
+                                        '.locWdth, .location, [class*="location"], [class*="loc"]'
+                                    )
+                                    location = loc_el.text.strip() if loc_el else "Not specified"
                                     
-                                    # Create job object
+                                    # Posted date
+                                    date_el = job_card.select_one(
+                                        '.job-post-day, .postedDate, .fleft.postedDate, [class*="day"]'
+                                    )
+                                    posted_date = date_el.text.strip() if date_el else "Just Now"
+                                    
+                                    # Job URL — look for job listing links
+                                    apply_link = ""
+                                    for link in job_card.find_all('a'):
+                                        href = link.get('href', '')
+                                        if any(p in href for p in ['/job-listings/', '/job-detail/', 'jobid=', 'jdUrl=']):
+                                            apply_link = href if href.startswith('http') else 'https://www.naukri.com' + href
+                                            break
+                                    if not apply_link:
+                                        for link in job_card.find_all('a'):
+                                            href = link.get('href', '')
+                                            if href and not href.startswith('#') and not href.startswith('javascript:'):
+                                                apply_link = href if href.startswith('http') else 'https://www.naukri.com' + href
+                                                break
+                                    
+                                    job_id = f"job_{hashlib.md5((title + company).encode()).hexdigest()}"
                                     job = {
                                         'job_id': job_id,
-                                        'title': title.strip(),
-                                        'company': company.strip(),
-                                        'location': location.strip(),
-                                        'posted_date': posted_date.strip(),
-                                        'apply_link': job_url,
+                                        'title': title,
+                                        'company': company,
+                                        'location': location,
+                                        'experience': experience,
+                                        'posted_date': posted_date,
+                                        'apply_link': apply_link,
                                         'category': category_name,
                                         'timestamp': datetime.now().isoformat()
                                     }
-                                    
                                     category_jobs.append(job)
+                                    
                                 except Exception as e:
-                                    logger.error(f"Error extracting job details: {str(e)}")
+                                    logger.error(f"Error extracting job card: {str(e)}")
+                                    continue
                             
                             if category_jobs:
-                                logger.info(f"Successfully extracted {len(category_jobs)} jobs in {category_name} category")
+                                logger.info(f"Extracted {len(category_jobs)} jobs for {category_name}")
                                 jobs.extend(category_jobs)
-                                success = True
                             else:
-                                logger.warning(f"No jobs extracted for {category_name}, retry {retry_count+1}/{max_retries}")
-                                retry_count += 1
-                                continue
-                            
+                                logger.warning(f"No jobs extracted from {category_name} page")
+                                
                         except Exception as e:
-                            logger.error(f"Error processing category {category_name}: {str(e)}, retry {retry_count+1}/{max_retries}")
-                            retry_count += 1
-                            continue
-                    
-                    if not success:
+                            logger.error(f"Error during job extraction for {category_name}: {str(e)}")
+                    else:
                         logger.error(f"Failed to scrape {category_name} jobs after {max_retries} retries")
                     
-                    # Add a delay between categories to avoid rate limiting
+                    # Delay between categories
                     await asyncio.sleep(random.uniform(5, 10))
                 
                 await browser.close()
                 
-                # Return whatever jobs were found (may be empty)
                 if not jobs:
                     logger.warning("No jobs found across all categories")
                 else:
                     logger.info(f"Found a total of {len(jobs)} jobs across all categories")
                 
                 return jobs
+
                 
                 # Get page content and parse with BeautifulSoup
                 content = await page.content()
