@@ -1076,9 +1076,9 @@ class NaukriJobScraper:
         
         message = (
             f"📌 {job['title']}\n\n"
-            f"🏢 Company: {job['company']}\n"
-            f"⏳ Experience: {experience}\n"
-            f"📍 Location: {job['location']}\n"
+            f"🏢 Company: {job['company']}\n\n"
+            f"⏳ Experience: {experience}\n\n"
+            f"📍 Location: {job['location']}\n\n"
             f"💰 CTC: {ctc}\n\n"
             f"{hashtags}\n\n"
             f"🔗 Apply Link: {encrypted_link}"
