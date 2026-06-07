@@ -44,7 +44,7 @@ class NaukriJobScraper:
         self.telegram_token = telegram_token
         self.channel_id = channel_id
         self.db_path = "jobs.db"
-        self.use_proxies = True
+        self.use_proxies = False  # Disabled: free proxies cause tunnel failures; AWS direct IP works fine
         self.proxies = []
         self.last_proxy_fetch_time = 0
         self.proxy_fetch_interval = 30 * 60  # 30 minutes
@@ -73,22 +73,13 @@ class NaukriJobScraper:
     def get_random_user_agent(self):
         """Return a random user agent from a list of common browsers"""
         user_agents = [
-            # Chrome on Windows
+            # Desktop only — mobile UAs load different Naukri HTML that breaks selectors
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-            # Firefox on Windows
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/118.0',
-            # Edge on Windows
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-            # Safari on macOS
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-            # Chrome on macOS
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            # Mobile User Agents
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'
         ]
         return random.choice(user_agents)
         
@@ -1031,14 +1022,16 @@ class NaukriJobScraper:
         with open(posted_urls_file, "r", encoding="utf-8") as f:
             posted_urls = f.read().splitlines()
         
-        # If the URL is in the list, it's a duplicate - skip it
+        # If the URL is in the list, it's a duplicate - skip it and mark in DB
         if job['apply_link'] in posted_urls:
             logger.info(f"Skipping duplicate job URL: {job['apply_link']}")
+            self.mark_job_as_posted(job['job_id'])  # Mark in DB to stop infinite loop
             return False
             
         # Also check for similar jobs using our improved method
         if self.is_duplicate_job(job):
             logger.info(f"Skipping duplicate job: {job['title']} at {job['company']}")
+            self.mark_job_as_posted(job['job_id'])  # Mark in DB to stop infinite loop
             return False
             
         # Encrypt the job URL
