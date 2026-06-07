@@ -650,7 +650,7 @@ class NaukriJobScraper:
                             logger.info(f"Found {len(job_cards)} job cards for {category_name}")
                             
                             category_jobs = []
-                            for job_card in job_cards[:20]:
+                            for job_card in job_cards[:1]:  # Only take the FIRST (latest) job
                                 try:
                                     # Title
                                     title_el = job_card.select_one(
@@ -1113,33 +1113,41 @@ class NaukriJobScraper:
                 pass
     
     async def process_jobs(self):
-        """Main process to scrape and post jobs"""
+        """Every minute: scrape Naukri, pick the #1 latest job, post if not already sent."""
         try:
-            # Clean up job files to prevent them from growing too large
-            self.cleanup_job_files()
-            # Scrape jobs
             logger.info("Starting job scraping")
             jobs = await self.scrape_jobs()
             
-            # Save to database
-            new_jobs_count = self.save_jobs_to_db(jobs)
-            logger.info(f"Found {new_jobs_count} new jobs")
+            if not jobs:
+                logger.info("No jobs found this cycle — will retry next minute")
+                return
             
-            # Get unposted jobs
-            unposted_jobs = self.get_unposted_jobs()
-            logger.info(f"Found {len(unposted_jobs)} unposted jobs")
+            # Take only the very first (latest) job
+            job = jobs[0]
+            logger.info(f"Latest job: {job['title']} at {job['company']}")
             
-            # Post only 1 job per run to avoid flooding the channel
-            posted_count = 0
-            for job in unposted_jobs:
-                if posted_count >= 1:
-                    break  # Only post 1 job per scheduled run
-                success = await self.post_job_to_telegram(job)
-                if success:
-                    self.mark_job_as_posted(job['job_id'])
-                    posted_count += 1
+            # Check posted_job_urls.txt to see if already sent
+            posted_urls_file = "posted_job_urls.txt"
+            if not os.path.exists(posted_urls_file):
+                with open(posted_urls_file, "w", encoding="utf-8") as f:
+                    f.write("")
             
-            logger.info(f"Job processing completed — posted {posted_count} job(s)")
+            with open(posted_urls_file, "r", encoding="utf-8") as f:
+                posted_urls = set(f.read().splitlines())
+            
+            if job['apply_link'] in posted_urls:
+                logger.info(f"Job already posted: {job['title']} — skipping")
+                return
+            
+            # Post to Telegram
+            success = await self.post_job_to_telegram(job)
+            if success:
+                # Mark as posted
+                with open(posted_urls_file, "a", encoding="utf-8") as f:
+                    f.write(f"{job['apply_link']}\n")
+                logger.info(f"✅ Posted: {job['title']}")
+            
+            logger.info("Job processing completed")
         except Exception as e:
             logger.error(f"Error in process_jobs: {str(e)}")
 
