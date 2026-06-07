@@ -357,9 +357,9 @@ class NaukriJobScraper:
         # Define job categories if not provided
         if categories is None:
             categories = [
-                {"name": "IT", "url": "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch&sort=1"},
-                {"name": "Software", "url": "https://www.naukri.com/software-developer-jobs?sort=1"},
-                {"name": "Data Science", "url": "https://www.naukri.com/data-scientist-jobs?sort=1"}
+                {"name": "IT", "url": "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch"},
+                {"name": "Software", "url": "https://www.naukri.com/software-developer-jobs"},
+                {"name": "Data Science", "url": "https://www.naukri.com/data-scientist-jobs"}
             ]
         
         # Maximum retry attempts
@@ -621,8 +621,31 @@ class NaukriJobScraper:
                             # Navigate to the job URL
                             await page.goto(job_url, wait_until='domcontentloaded', timeout=60000)
                             
-                            # Wait for the page to load completely
+                            # Wait for the page to load
                             await asyncio.sleep(10)
+                            
+                            # === Sort by Date using JavaScript ===
+                            try:
+                                js_sorted = await page.evaluate("""
+                                    () => {
+                                        // Try clicking sort-by-date button via data-id
+                                        let el = document.querySelector('a[data-id="filter-sort-f"]');
+                                        if (el) { el.click(); return 'clicked data-id'; }
+                                        // Try by text content
+                                        const all = Array.from(document.querySelectorAll('a, li, button'));
+                                        for (const a of all) {
+                                            if (a.textContent.trim() === 'Date') { a.click(); return 'clicked text'; }
+                                        }
+                                        return null;
+                                    }
+                                """)
+                                if js_sorted:
+                                    logger.info(f"Sorted by date: {js_sorted}")
+                                    await asyncio.sleep(8)  # Wait for page to reload after sort
+                                else:
+                                    logger.info("Sort by date not available, using default order")
+                            except Exception as sort_err:
+                                logger.warning(f"Could not sort by date: {sort_err}")
                             
                             # Break after first successful navigation
                             success = True
