@@ -135,8 +135,8 @@ class NaukriJobScraper:
                 '--mute-audio'
             ]
             
-            # Set headless mode to False for debugging, True for production
-            headless_mode = False
+            # Set headless mode to True for Linux/production (no display needed)
+            headless_mode = True
             
             self.browser = await self.playwright.chromium.launch(
                 headless=headless_mode,
@@ -420,8 +420,8 @@ class NaukriJobScraper:
                 if proxy:
                     browser_args.append(f'--proxy-server={proxy}')
                 
-                # Set headless mode to False for debugging, True for production
-                headless_mode = False
+                # Set headless mode to True for Linux/production (no display needed)
+                headless_mode = True
                 
                 browser = await p.chromium.launch(
                     headless=headless_mode,
