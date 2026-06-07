@@ -814,5 +814,5 @@ def run_premium_bot(telegram_token):
 
 if __name__ == "__main__":
     # Create the Updater and pass it your bot's token
-    telegram_token = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
+    telegram_token = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
     run_premium_bot(telegram_token)

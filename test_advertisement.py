@@ -11,8 +11,8 @@ logging.basicConfig(
 logger = logging.getLogger('test_advertisement')
 
 # Use the actual token from the file
-TELEGRAM_TOKEN = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
-CHANNEL_ID = "@job_opening_free"
+TELEGRAM_TOKEN = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
+CHANNEL_ID = "@IT_Job_openings_Naukri"
 
 async def test_advertisement():
     """Test sending an advertisement to the channel"""

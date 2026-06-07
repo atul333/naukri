@@ -1165,8 +1165,8 @@ class NaukriJobScraper:
 async def main():
     """Main function to run the scraper"""
     # Configuration
-    telegram_token = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
-    channel_id = "@job_opening_free"
+    telegram_token = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
+    channel_id = "@IT_Job_openings_Naukri"
     
     # Initialize scraper
     scraper = NaukriJobScraper(telegram_token, channel_id)

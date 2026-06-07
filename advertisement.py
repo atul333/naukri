@@ -19,7 +19,7 @@ def get_advertisement_message():
     Returns an energetic advertisement message for the Naukri bot
     """
     ad_message = """
-🚀 <b>Supercharge Your Job Search with aukri@N_Job_Premium_bot!</b>
+🚀 <b>Supercharge Your Job Search with Premium_Naukri_bot!</b>
 
 ⚡️ Be the <b>FIRST</b> to apply for jobs on Naukri com - completely FREE!
 
@@ -31,7 +31,7 @@ def get_advertisement_message():
 
 🏆 <b>Stay ahead of the competition</b> - Apply before anyone else! 🏆
 
-👉 <b>Start now:</b> <a href="https://t.me/Naukri_Job_Premium_bot">https://t.me/Naukri_Job_Premium_bot</a> 👈
+👉 <b>Start now:</b> <a href="https://t.me/Premium_Naukri_bot">https://t.me/Premium_Naukri_bot</a> 👈
     """
     return ad_message.strip()
 
@@ -43,7 +43,7 @@ def get_alternative_ad_message():
     alt_ad_message = """
 🔥 <b>FREE PRIMIUM BOT WITH JOB FILTER</b>
 
-⏰ <a href="https://t.me/Naukri_Job_Premium_bot">https://t.me/Naukri_Job_Premium_bot</a> delivers Naukri com jobs to you INSTANTLY! ⏰
+⏰ <a href="https://t.me/Premium_Naukri_bot">https://t.me/Premium_Naukri_bot</a> delivers Naukri com jobs to you INSTANTLY! ⏰
 
 ✅ Custom keyword filters
 ✅ Experience level matching
@@ -52,7 +52,7 @@ def get_alternative_ad_message():
 
 💯 <b>Never miss your dream job again!</b> 💯
 
-🤖 <b>Try it now:</b> <a href="https://t.me/Naukri_Job_Premium_bot">https://t.me/Naukri_Job_Premium_bot</a>
+🤖 <b>Try it now:</b> <a href="https://t.me/Premium_Naukri_bot">https://t.me/Premium_Naukri_bot</a>
     """
     return alt_ad_message.strip()
 

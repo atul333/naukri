@@ -15,7 +15,10 @@ from advertisement import check_and_send_advertisement, send_advertisement_to_ch
 import tempfile
 
 # Use the actual token from the file
-TELEGRAM_TOKEN = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
+TELEGRAM_TOKEN = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
+
+# Premium bot (t.me/Premium_Naukri_bot) - separate dedicated bot for user subscriptions
+PREMIUM_TOKEN = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
 
 # Configure logging
 logging.basicConfig(
@@ -275,8 +278,8 @@ async def extract_and_post_first_job():
     logger.info("Starting extraction of first job")
     
     # Initialize scraper with Telegram credentials
-    telegram_token = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"
-    channel_id = "@job_opening_free"
+    telegram_token = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
+    channel_id = "@IT_Job_openings_Naukri"
     logger.info(f"Running with Telegram bot token and channel: {channel_id}")
     
     scraper = NaukriJobScraper(telegram_token, channel_id)
@@ -361,81 +364,87 @@ async def extract_and_post_first_job():
                 logger.warning(f"Error handling rotation message: {str(e)}")
                 # Continue anyway
             
-            # Click on Sort by dropdown
-            logger.info("Clicking on Sort by dropdown")
+            # Click on Sort by dropdown and sort by Date
+            logger.info("Attempting to sort results by Date")
             try:
-                # No need to save screenshot before sorting
-                
-                # Try multiple approaches to find and click the sort dropdown
-                # First try: Use evaluate to find and click the sort dropdown by text content
-                logger.info("Trying to find sort dropdown by text content")
-                sort_clicked = await page.evaluate("""
-                    () => {
-                        // Try to find elements containing 'Sort by' or 'Relevance' text
-                        const elements = Array.from(document.querySelectorAll('*'));
-                        for (const el of elements) {
-                            if (el.textContent && (el.textContent.includes('Sort by') || el.textContent.includes('Relevance'))) {
-                                el.click();
-                                return true;
-                            }
-                        }
-                        return false;
-                    }
-                """)
-                
-                if sort_clicked:
-                    logger.info("Found and clicked sort dropdown using JavaScript")
-                    await asyncio.sleep(3)  # Wait for dropdown to appear
-                    
-                    # No need to save screenshot after clicking dropdown
-                    
-                    # Try to click on Date option using JavaScript
-                    date_clicked = await page.evaluate("""
-                        () => {
-                            // Try to find elements containing 'Date' text
-                            const elements = Array.from(document.querySelectorAll('*'));
-                            for (const el of elements) {
-                                if (el.textContent && el.textContent.trim() === 'Date') {
-                                    el.click();
-                                    return true;
-                                }
-                            }
-                            return false;
-                        }
-                    """)
-                    
-                    if date_clicked:
-                        logger.info("Selected Date sorting option using JavaScript")
-                        # Wait for page to refresh with new sorting
-                        await asyncio.sleep(10)
+                sorted_by_date = False
+
+                # Strategy 1: Use #filter-sort button
+                sort_button = await page.query_selector('#filter-sort')
+                if sort_button:
+                    current_sort = await sort_button.inner_text()
+                    logger.info(f"Current sort option: {current_sort.strip()}")
+                    if "date" in current_sort.lower():
+                        logger.info("Already sorted by Date")
+                        sorted_by_date = True
                     else:
-                        logger.warning("Could not find Date option in dropdown using JavaScript")
-                else:
-                    # Second try: Use traditional selectors with broader matching
-                    logger.info("Trying traditional selectors for sort dropdown")
-                    sort_dropdown = await page.wait_for_selector(
-                        '[data-qa*="sort"], [class*="sort"], [class*="Sort"], [class*="filter"], [class*="Filter"], button:has-text("Sort"), div:has-text("Sort by"), span:has-text("Sort by"), div:has-text("Relevance")', 
-                        timeout=10000
-                    )
-                    if sort_dropdown:
-                        await sort_dropdown.click()
-                        logger.info("Clicked on Sort by dropdown using selector")
-                        
-                        # Wait for dropdown options to appear and click on Date option
+                        logger.info("Sorting by Date via #filter-sort button...")
+                        await sort_button.click()
                         await asyncio.sleep(3)
-                        date_option = await page.wait_for_selector(
-                            '[data-qa*="Date"], li:has-text("Date"), .option:has-text("Date"), [class*="option"]:has-text("Date"), div:has-text("Date")', 
-                            timeout=10000
-                        )
+
+                        # Try clicking Date option by data-id
+                        date_option = await page.query_selector('a[data-id="filter-sort-f"]')
                         if date_option:
                             await date_option.click()
-                            logger.info("Selected Date sorting option using selector")
-                            # Wait for page to refresh with new sorting
+                            logger.info("Clicked Date sort option (data-id selector)")
                             await asyncio.sleep(10)
+                            sorted_by_date = True
                         else:
-                            logger.warning("Could not find Date option in dropdown using selector")
+                            # Fallback: text-based selectors
+                            for sel in [
+                                'ul[data-filter-id="sort"] li[title="Date"]',
+                                'ul[data-filter-id="sort"] a:has-text("Date")',
+                                '.filter-sort-options a:has-text("Date")',
+                                'li:has-text("Date") a',
+                                'a:has-text("Date")',
+                            ]:
+                                try:
+                                    opt = await page.query_selector(sel)
+                                    if opt:
+                                        await opt.click()
+                                        logger.info(f"Clicked Date sort option ({sel})")
+                                        await asyncio.sleep(10)
+                                        sorted_by_date = True
+                                        break
+                                except Exception:
+                                    pass
+
+                if not sorted_by_date:
+                    logger.warning("Standard selectors failed. Trying JavaScript-based sort-by-date...")
+                    # Strategy 2: Use JavaScript to click the Date sort option
+                    js_sorted = await page.evaluate("""
+                        () => {
+                            // Try by data-id
+                            let el = document.querySelector('a[data-id="filter-sort-f"]');
+                            if (el) { el.click(); return 'data-id click'; }
+                            // Try by text content
+                            const anchors = Array.from(document.querySelectorAll('a, li, button'));
+                            for (const a of anchors) {
+                                if (a.textContent.trim() === 'Date') { a.click(); return 'text click'; }
+                            }
+                            return null;
+                        }
+                    """)
+                    if js_sorted:
+                        logger.info(f"JavaScript sort result: {js_sorted}")
+                        await asyncio.sleep(10)
+                        sorted_by_date = True
                     else:
-                        logger.warning("Could not find Sort by dropdown using selector")
+                        logger.warning("JavaScript sort also failed — using URL approach")
+                        # Strategy 3: Append sort parameter to URL
+                        current_url = page.url
+                        if 'sort=' not in current_url:
+                            sorted_url = current_url + ('&' if '?' in current_url else '?') + 'sort=1'
+                        else:
+                            import re
+                            sorted_url = re.sub(r'sort=\d', 'sort=1', current_url)
+                        logger.info(f"Navigating to sort-by-date URL: {sorted_url}")
+                        await page.goto(sorted_url, wait_until='domcontentloaded', timeout=60000)
+                        await asyncio.sleep(10)
+                        sorted_by_date = True
+
+                logger.info(f"Sort by date applied: {sorted_by_date}")
+
             except Exception as e:
                 logger.error(f"Error while trying to sort by date: {str(e)}")
                 logger.info("Continuing with default sorting")
@@ -453,8 +462,17 @@ async def extract_and_post_first_job():
             # Look for the first job card after sorting by date
             logger.info("Looking for the first job card after sorting by date")
             
-            # Try to find job cards with various selectors
-            job_cards = soup.select('article.jobTupleWrapper, .jobTuple, .SRPstyle__NormalCardStyle-sc-1rnhgwh-0, div[data-job-id]')
+            # Try to find job cards with various selectors (modern + legacy Naukri selectors)
+            job_cards = soup.select(
+                '.srp-jobtuple-wrapper, '
+                'article.jobTupleWrapper, '
+                '.jobTuple, '
+                '.job-tuple, '
+                '[class*="srp-jobtuple"], '
+                '[class*="NormalCard"], '
+                'div[data-job-id], '
+                '.SRPstyle__NormalCardStyle-sc-1rnhgwh-0'
+            )
             logger.info(f"Found {len(job_cards)} potential job cards")
             
             target_job = None
@@ -462,7 +480,11 @@ async def extract_and_post_first_job():
             # Get the first job card
             if job_cards:
                 target_job = job_cards[0]
-                title_element = target_job.select_one('.jobTupleHeader .title, h2.jobTitle, .title, h2, h3, .srpHdr, .list-job-title')
+                title_element = target_job.select_one(
+                    '.title, .job-title, [class*="title"], '
+                    '.jobTupleHeader .title, h2.jobTitle, '
+                    'h2, h3, .srpHdr, .list-job-title'
+                )
                 if title_element:
                     logger.info(f"Found first job: {title_element.text.strip()}")
                 else:
@@ -472,7 +494,11 @@ async def extract_and_post_first_job():
             
             if target_job:
                 # Extract all required information from the job card
-                title_element = target_job.select_one('.jobTupleHeader .title, h2.jobTitle, .title, h2, h3, .srpHdr, .list-job-title')
+                title_element = target_job.select_one(
+                    '.title, .job-title, [class*="title"], '
+                    '.jobTupleHeader .title, h2.jobTitle, '
+                    'h2, h3, .srpHdr, .list-job-title'
+                )
                 if not title_element:
                     logger.warning("Could not extract job title, skipping this job")
                     return
@@ -519,12 +545,16 @@ async def extract_and_post_first_job():
                 company = company.strip()
                 
                 # Extract experience
-                experience_element = target_job.select_one('.ellipsis.fleft.fs12.lh16, [class*="experience"], [class*="exp"]')
+                experience_element = target_job.select_one('.expwdth, .ellipsis.fleft.fs12.lh16, [class*="experience"], [class*="exp"]')
                 experience = experience_element.text.strip() if experience_element else "Not specified"
                 
                 # Extract location
-                location_element = target_job.select_one('.locWdth span.ellipsis, .location, [class*="location"], [class*="loc"]')
+                location_element = target_job.select_one('.locWdth, .locWdth span.ellipsis, .location, [class*="location"], [class*="loc"]')
                 location = location_element.text.strip() if location_element else "Not specified"
+                
+                # Extract posted date
+                posted_date_element = target_job.select_one('.job-post-day, .fleft.postedDate, .postedDate, .date, [class*="day"]')
+                posted_date = posted_date_element.text.strip() if posted_date_element else "Just Now"
                 
                 # Extract CTC (Cost to Company)
                 ctc = "NA"
@@ -861,7 +891,7 @@ async def extract_and_post_first_job():
                     "company": company,
                     "location": location,
                     "experience": experience,
-                    "posted_date": "Just Now",
+                    "posted_date": posted_date,
                     "hashtags": hashtags,
                     "timestamp": datetime.now().isoformat()
                 }
@@ -1018,7 +1048,7 @@ async def extract_and_post_first_job():
                     ]
                     company_selectors = ['.companyInfo a.subTitle', '.company', '[class*="company"]', '[class*="org"]']
                     location_selectors = ['.locWdth span.ellipsis', '.location', '[class*="location"]', '[class*="loc"]']
-                    date_selectors = ['.fleft.postedDate', '.date', '[class*="date"]', '[class*="posted"]']
+                    date_selectors = ['.job-post-day', '.fleft.postedDate', '.date', '[class*="date"]', '[class*="posted"]']
                     
                     # Extract job details using multiple possible selectors
                     title_element = None
@@ -1119,7 +1149,7 @@ if __name__ == "__main__":
     
     # Use the token defined at the top of the file
     telegram_token = TELEGRAM_TOKEN
-    channel_id = "@job_opening_free"
+    channel_id = "@IT_Job_openings_Naukri"
     
     def run_job():
         """Run the job scraper"""
@@ -1145,7 +1175,7 @@ if __name__ == "__main__":
     # Start premium bot directly (no need for threading)
     logger.info("Starting premium bot...")
     try:
-        premium_bot_updater = run_premium_bot(telegram_token)
+        premium_bot_updater = run_premium_bot(PREMIUM_TOKEN)
         logger.info("Premium bot started")
     except (TimedOut, NetworkError) as e:
         logger.warning(f"Telegram connection error: {e}. Continuing with other functionality.")

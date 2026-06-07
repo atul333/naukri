@@ -15,8 +15,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Telegram configuration
-TELEGRAM_TOKEN = "8470957235:AAFigzyiwRXSZGnIFn_x7wX6zLLAFX00ABk"  # Telegram bot token
-CHANNEL_ID = "@job_opening_free"  # Replace with your actual channel ID
+TELEGRAM_TOKEN = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"  # Telegram bot token
+CHANNEL_ID = "@IT_Job_openings_Naukri"  # Telegram channel ID
 
 def post_advertisement():
     """
