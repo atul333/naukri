@@ -366,9 +366,9 @@ class NaukriJobScraper:
         # Define job categories if not provided
         if categories is None:
             categories = [
-                {"name": "IT", "url": "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch"},
-                {"name": "Software", "url": "https://www.naukri.com/software-developer-jobs"},
-                {"name": "Data Science", "url": "https://www.naukri.com/data-scientist-jobs"}
+                {"name": "IT", "url": "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch&sort=1"},
+                {"name": "Software", "url": "https://www.naukri.com/software-developer-jobs?sort=1"},
+                {"name": "Data Science", "url": "https://www.naukri.com/data-scientist-jobs?sort=1"}
             ]
         
         # Maximum retry attempts
@@ -874,29 +874,24 @@ class NaukriJobScraper:
         
         logger.info(f"Marked job {job_id} as posted")
     
-    async def send_telegram_message(self, message_text, parse_mode='Markdown'):
+    async def send_telegram_message(self, message_text, parse_mode=None):
         """Send a message to Telegram"""
         if not self.telegram_token or not self.channel_id:
             logger.warning("Telegram credentials not provided, skipping message")
             return False
         
         try:
-            # Create a bot instance
             bot = Bot(token=self.telegram_token)
-            
-            # Send the message - use await correctly with the send_message method
-            # The send_message method returns a Message object, but we don't need to await it again
-            message = await bot.send_message(
-                chat_id=self.channel_id,
-                text=message_text,
-                parse_mode=parse_mode,
-                disable_web_page_preview=False,
-                protect_content=True  # Disable forwarding and copying of messages
-            )
-            
-            logger.info(f"Sent message to Telegram")
+            kwargs = {
+                'chat_id': self.channel_id,
+                'text': message_text,
+                'disable_web_page_preview': True
+            }
+            if parse_mode:  # Only add parse_mode if not None/empty
+                kwargs['parse_mode'] = parse_mode
+            message = await bot.send_message(**kwargs)
+            logger.info("Sent message to Telegram")
             return True
-            
         except Exception as e:
             logger.error(f"Error sending to Telegram: {str(e)}")
             return False
@@ -1051,29 +1046,34 @@ class NaukriJobScraper:
         logger.info(f"Original link: {job['apply_link']}")
         logger.info(f"Encrypted link: {encrypted_link}")
             
-        # Format message
-        message = f"""
-📌 Job Alert: {job['title']}
-🏢 Company: {job['company']}
-📍 Location: {job['location']}
-🗓️ Posted: {job['posted_date']}
-🔗 Apply Here: {encrypted_link}
-
-#Job #{job.get('category', 'Job')}
-        """
+        # Format message to match the required format (plain text, no Markdown)
+        import re as _re
+        
+        # Generate hashtags from job title
+        title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job['title'])
+        hashtags = ' '.join([f"#{w}" for w in title_words if len(w) > 2])
+        if not hashtags:
+            hashtags = f"#{job.get('category', 'IT')}Jobs"
+        
+        experience = job.get('experience', 'Not specified')
+        ctc = "NA"  # Not available from listing page
+        
+        message = (
+            f"📌 {job['title']}\n\n"
+            f"🏢 Company: {job['company']}\n"
+            f"⏳ Experience: {experience}\n"
+            f"📍 Location: {job['location']}\n"
+            f"💰 CTC: {ctc}\n\n"
+            f"{hashtags}\n\n"
+            f"🔗 Apply Link: {encrypted_link}"
+        )
         
         try:
-            # Use the general send_telegram_message method
-            result = await self.send_telegram_message(message)
+            from advertisement import check_and_send_advertisement
+            result = await self.send_telegram_message(message, parse_mode=None)
             if result:
                 logger.info(f"Posted job to Telegram: {job['title']}")
-                
-                # Import advertisement module here to avoid circular imports
-                from advertisement import check_and_send_advertisement
-                
-                # Send advertisement to channel only after successful job posting
                 check_and_send_advertisement(self.telegram_token, self.channel_id)
-                
             return result
         except Exception as e:
             logger.error(f"Error posting to Telegram: {str(e)}")
@@ -1136,15 +1136,17 @@ class NaukriJobScraper:
             unposted_jobs = self.get_unposted_jobs()
             logger.info(f"Found {len(unposted_jobs)} unposted jobs")
             
-            # Post to Telegram
+            # Post only 1 job per run to avoid flooding the channel
+            posted_count = 0
             for job in unposted_jobs:
+                if posted_count >= 1:
+                    break  # Only post 1 job per scheduled run
                 success = await self.post_job_to_telegram(job)
                 if success:
                     self.mark_job_as_posted(job['job_id'])
-                    # Add a delay between posts to avoid rate limiting
-                    await asyncio.sleep(2)
+                    posted_count += 1
             
-            logger.info("Job processing completed")
+            logger.info(f"Job processing completed — posted {posted_count} job(s)")
         except Exception as e:
             logger.error(f"Error in process_jobs: {str(e)}")
 
