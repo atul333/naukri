@@ -132,7 +132,8 @@ class NaukriJobScraper:
                 '--no-zygote',
                 '--disable-gpu',
                 '--hide-scrollbars',
-                '--mute-audio'
+                '--mute-audio',
+                '--disable-http2'  # Force HTTP/1.1 so proxies don't break HTTP/2
             ]
             
             # Set headless mode to True for Linux/production (no display needed)
@@ -413,7 +414,8 @@ class NaukriJobScraper:
                     '--no-zygote',
                     '--disable-gpu',
                     '--hide-scrollbars',
-                    '--mute-audio'
+                    '--mute-audio',
+                    '--disable-http2'  # Force HTTP/1.1 so proxies don't break HTTP/2
                 ]
                 
                 # Add proxy if available
