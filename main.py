@@ -706,6 +706,17 @@ class NaukriJobScraper:
                                     )
                                     location = loc_el.text.strip() if loc_el else "Not specified"
                                     
+                                    # CTC / Salary
+                                    ctc = "NA"
+                                    sal_el = job_card.select_one(
+                                        '.salary, .salwdth, [class*="salary"], '
+                                        '[class*="sal"], .compensation'
+                                    )
+                                    if sal_el:
+                                        sal_text = sal_el.text.strip()
+                                        if sal_text and sal_text not in ['-', '--', 'Not disclosed', '']:
+                                            ctc = sal_text
+                                    
                                     # Posted date
                                     date_el = job_card.select_one(
                                         '.job-post-day, .postedDate, .fleft.postedDate, [class*="day"]'
@@ -747,6 +758,7 @@ class NaukriJobScraper:
                                         'company': company,
                                         'location': location,
                                         'experience': experience,
+                                        'ctc': ctc,
                                         'posted_date': posted_date,
                                         'apply_link': apply_link,
                                         'skills': skills,
@@ -1099,7 +1111,7 @@ class NaukriJobScraper:
             hashtags = f"#{job.get('category', 'IT')}Jobs"
         
         experience = job.get('experience', 'Not specified')
-        ctc = "NA"  # Not available from listing page
+        ctc = job.get('ctc', 'NA') or 'NA'
         
         message = (
             f"📌 {job['title']}\n\n"
