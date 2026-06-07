@@ -1,76 +1,62 @@
+"""
+Premium Naukri Bot — python-telegram-bot v20 (async)
+Users register, set preferences (keywords, experience, location).
+main.py reads premium_users.json and sends matching jobs directly to each user.
+"""
 import os
 import json
-import time
-import threading
 import logging
-import qrcode
-import io
-import base64
+import asyncio
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler, CallbackQueryHandler
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    filters, ConversationHandler, CallbackQueryHandler,
+    ContextTypes
+)
 
-# Set up logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Define conversation states
+# Conversation states
 TITLE, EXPERIENCE, LOCATION, EDIT_PREFERENCES = range(4)
 
-# Path to the premium users JSON file
 PREMIUM_USERS_FILE = "premium_users.json"
+PREMIUM_BOT_TOKEN = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
 
-# Admin configuration
-ADMIN_USERNAME = "SocialAdLinker"
-ADMIN_CHAT_ID = None  # Will be set when admin uses the bot
-
-# Initialize premium users data structure if file doesn't exist
-if not os.path.exists(PREMIUM_USERS_FILE):
-    with open(PREMIUM_USERS_FILE, "w") as f:
-        json.dump({}, f)
 
 def load_premium_users():
-    """Load premium users from JSON file"""
     try:
         with open(PREMIUM_USERS_FILE, "r") as f:
             return json.load(f)
     except (json.JSONDecodeError, FileNotFoundError):
         return {}
 
-def save_premium_users(premium_users):
-    """Save premium users to JSON file"""
-    with open(PREMIUM_USERS_FILE, "w") as f:
-        json.dump(premium_users, f, indent=2)
 
-def start(update: Update, context: CallbackContext) -> int:
-    """Send welcome message when the command /start is issued."""
+def save_premium_users(data):
+    with open(PREMIUM_USERS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+# ─────────────────────────────────────────────
+# /start
+# ─────────────────────────────────────────────
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     user_id = str(user.id)
     username = user.username or user.first_name
-    
-    # Load premium users
-    premium_users = load_premium_users()
-    
-    # Check if user already exists and has preferences
-    user_exists = user_id in premium_users
-    has_preferences = False
-    
-    if user_exists:
-        preferences = premium_users[user_id].get("preferences", {})
-        has_job_keywords = preferences.get("job_keywords", "") != ""
-        has_experience = preferences.get("experience", "") != ""
-        has_location = preferences.get("location", "") != ""
-        has_preferences = has_job_keywords and has_experience and has_location
-    
-    # If user doesn't exist, create new user
-    if not user_exists:
-        # Set premium status to lifetime (using a very distant future date)
-        expiry_time = datetime.now() + timedelta(days=36500)  # ~100 years (effectively lifetime)
-        
-        # Store user data with lifetime expiry time
-        premium_users[user_id] = {
+
+    users = load_premium_users()
+
+    # New user
+    if user_id not in users:
+        expiry = datetime.now() + timedelta(days=36500)
+        users[user_id] = {
             "username": username,
-            "expiry_time": expiry_time.timestamp(),
+            "expiry_time": expiry.timestamp(),
             "is_premium": True,
             "preferences": {
                 "job_keywords": "",
@@ -78,741 +64,212 @@ def start(update: Update, context: CallbackContext) -> int:
                 "location": ""
             }
         }
-        
-        # Save updated premium users
-        save_premium_users(premium_users)
-        
-        # Send welcome message
-        update.message.reply_text(
-            f"Welcome {username} to our premium membership! 🎉\n\n"
-                
+        save_premium_users(users)
+        await update.message.reply_text(
+            f"👋 Welcome *{username}* to Premium Naukri Bot! 🎉\n\n"
+            f"Let's set up your job preferences so we can send you matching jobs.",
+            parse_mode="Markdown"
         )
-        
-        # All premium memberships are now lifetime - no countdown or expiry check needed
-        logger.info(f"New user {username} ({user_id}) created with lifetime premium membership")
-    
-    # If user exists and has preferences, ask if they want to edit
-    if has_preferences:
+        await update.message.reply_text(
+            "🔍 Enter 1–5 job keywords separated by commas:\n"
+            "Example: `python, devops, aws, kubernetes`",
+            parse_mode="Markdown"
+        )
+        return TITLE
+
+    # Existing user
+    prefs = users[user_id].get("preferences", {})
+    has_prefs = all([
+        prefs.get("job_keywords"),
+        prefs.get("experience"),
+        prefs.get("location")
+    ])
+
+    if has_prefs:
         keyboard = [
-            [InlineKeyboardButton("✏️ Edit Job Keywords", callback_data="edit_keywords")],
+            [InlineKeyboardButton("✏️ Edit Keywords", callback_data="edit_keywords")],
             [InlineKeyboardButton("✏️ Edit Experience", callback_data="edit_experience")],
             [InlineKeyboardButton("✏️ Edit Location", callback_data="edit_location")],
-            [InlineKeyboardButton("👍 Keep Current Preferences", callback_data="keep_preferences")]
+            [InlineKeyboardButton("👍 Keep Current", callback_data="keep_preferences")],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # Show current preferences
-        current_prefs = premium_users[user_id]["preferences"]
-        update.message.reply_text(
-            f"Welcome back {username}! 👋\n\n"
-            f"Your current job preferences are:\n"
-            f"🔍 Keywords: {current_prefs.get('job_keywords', 'Not set')}\n"
-            f"⏳ Experience: {current_prefs.get('experience', 'Not set')} years\n"
-            f"📍 Location: {current_prefs.get('location', 'Not set')}\n\n"
-            f"Would you like to edit your preferences?",
-            reply_markup=reply_markup
+        await update.message.reply_text(
+            f"👋 Welcome back *{username}*!\n\n"
+            f"Your current preferences:\n"
+            f"🔍 Keywords: `{prefs.get('job_keywords', 'Not set')}`\n"
+            f"⏳ Experience: `{prefs.get('experience', 'Not set')}` yrs\n"
+            f"📍 Location: `{prefs.get('location', 'Not set')}`\n\n"
+            f"Want to update them?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
         )
         return EDIT_PREFERENCES
     else:
-        # Send separate messages for job preferences setup
-        context.bot.send_message(
-            chat_id=user_id,
-            text="Let's set up your job preferences."
+        await update.message.reply_text(
+            "🔍 Enter 1–5 job keywords separated by commas:\n"
+            "Example: `python, devops, aws, kubernetes`",
+            parse_mode="Markdown"
         )
-        
-        context.bot.send_message(
-            chat_id=user_id,
-            text="🔍 Please enter minimum 1 and maximum 5 keywords for your job search separated by commas (,):"
-        )
-        
-        context.bot.send_message(
-            chat_id=user_id,
-            text="Example: developer,python,web,frontend,react 💻"
-        )
-        
         return TITLE
 
-def renew_membership(update: Update, context: CallbackContext) -> None:
-    """Handle the /renew_membership command"""
-    # Create inline keyboard with payment options
-    keyboard = [
-        [InlineKeyboardButton("1 Day - ₹2", callback_data="payment_1_day")],
-        [InlineKeyboardButton("7 Days - ₹10", callback_data="payment_7_days")],
-        [InlineKeyboardButton("30 Days - ₹30", callback_data="payment_30_days")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    update.message.reply_text(
-        text="📱 *Premium Membership Renewal Options*\n\n"
-             "Please select a subscription period:\n\n"
-             "• 1 Day = ₹2\n"
-             "• 7 Days = ₹10\n"
-             "• 30 Days = ₹30",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
 
-def job_title(update: Update, context: CallbackContext) -> int:
-    """Store job keywords and ask for experience."""
+# ─────────────────────────────────────────────
+# Collect keywords
+# ─────────────────────────────────────────────
+async def job_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = str(update.effective_user.id)
     keywords = update.message.text.strip()
-    
-    # Load premium users
-    premium_users = load_premium_users()
-    
-    # Update job keywords preference
-    if user_id in premium_users:
-        premium_users[user_id]["preferences"]["job_keywords"] = keywords
-        save_premium_users(premium_users)
-    
-    # Send separate messages
-    update.message.reply_text(f"🎯 Great! Your job keywords are set: {keywords}")
-    
-    update.message.reply_text(f"📊 Now, please tell me your total experience (in years):")
-    
+
+    users = load_premium_users()
+    if user_id in users:
+        users[user_id]["preferences"]["job_keywords"] = keywords
+        save_premium_users(users)
+
+    await update.message.reply_text(f"✅ Keywords saved: `{keywords}`\n\n📊 Now enter your total experience in years (e.g. `4`):", parse_mode="Markdown")
     return EXPERIENCE
 
-def experience(update: Update, context: CallbackContext) -> int:
-    """Store experience and ask for location."""
+
+# ─────────────────────────────────────────────
+# Collect experience
+# ─────────────────────────────────────────────
+async def experience_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = str(update.effective_user.id)
-    experience = update.message.text.strip()
-    
-    # Load premium users
-    premium_users = load_premium_users()
-    
-    # Update experience preference
-    if user_id in premium_users:
-        premium_users[user_id]["preferences"]["experience"] = experience
-        save_premium_users(premium_users)
-    
-    # Send separate messages
-    update.message.reply_text(f"Thanks! Your experience is set to: {experience} years")
-    
-    update.message.reply_text(f"Finally, please tell me your preferred job location:")
-    
+    exp = update.message.text.strip()
+
+    users = load_premium_users()
+    if user_id in users:
+        users[user_id]["preferences"]["experience"] = exp
+        save_premium_users(users)
+
+    await update.message.reply_text(f"✅ Experience saved: `{exp}` yrs\n\n📍 Enter your preferred job location (e.g. `Mumbai, Pune`):", parse_mode="Markdown")
     return LOCATION
 
-def location(update: Update, context: CallbackContext) -> int:
-    """Store location and complete the setup."""
+
+# ─────────────────────────────────────────────
+# Collect location
+# ─────────────────────────────────────────────
+async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = str(update.effective_user.id)
-    location = update.message.text.strip()
-    
-    # Load premium users
-    premium_users = load_premium_users()
-    
-    # Update location preference
-    if user_id in premium_users:
-        premium_users[user_id]["preferences"]["location"] = location
-        save_premium_users(premium_users)
-    
-    # Get all preferences for confirmation
-    preferences = premium_users[user_id]["preferences"]
-    
-    # Send confirmation message
-    update.message.reply_text(f"Perfect! Your job preferences have been saved:")
-    
-    # Send detailed preferences
-    update.message.reply_text(
-        f"🔹 Job Keywords: {preferences['job_keywords']}\n"
-        f"🔹 Experience: {preferences['experience']} years\n"
-        f"🔹 Location: {preferences['location']}"
+    loc = update.message.text.strip()
+
+    users = load_premium_users()
+    if user_id in users:
+        users[user_id]["preferences"]["location"] = loc
+        save_premium_users(users)
+
+    prefs = users[user_id]["preferences"]
+    await update.message.reply_text(
+        f"🎉 *Preferences saved!*\n\n"
+        f"🔍 Keywords: `{prefs['job_keywords']}`\n"
+        f"⏳ Experience: `{prefs['experience']}` yrs\n"
+        f"📍 Location: `{prefs['location']}`\n\n"
+        f"You will now receive matching job alerts directly here! ✅",
+        parse_mode="Markdown"
     )
-    
-    # Send final message
-    update.message.reply_text(
-        f"You will receive job alerts matching these keywords during your premium membership.\n"
-        
-    )
-    
     return ConversationHandler.END
 
-def show_countdown(user_id, bot, minutes):
-    """Show countdown timer for premium membership"""
-    # All premium memberships are now lifetime - no countdown needed
-    logger.info(f"Countdown disabled - all users have lifetime premium membership")
 
-def check_and_expire_membership(user_id, bot):
-    """Check if membership has expired and notify user"""
-    # All premium memberships are now lifetime - no expiration needed
-    logger.info(f"Membership expiration check disabled - all users have lifetime premium membership")
-
-def cancel(update: Update, context: CallbackContext) -> int:
-    """Cancel and end the conversation."""
-    update.message.reply_text('Preferences setup cancelled. You can restart anytime with /start')
-    return ConversationHandler.END
-
-def renew_membership_callback(update: Update, context: CallbackContext):
-    """Handle the renewal button click"""
-    query = update.callback_query
-    query.answer()
-    
-    # Create inline keyboard with payment options
-    keyboard = [
-        [InlineKeyboardButton("1 Day - ₹2", callback_data="payment_1_day")],
-        [InlineKeyboardButton("7 Days - ₹10", callback_data="payment_7_days")],
-        [InlineKeyboardButton("30 Days - ₹30", callback_data="payment_30_days")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    query.edit_message_text(
-        text="📱 *Premium Membership Renewal Options*\n\n"
-             "Please select a subscription period:\n\n"
-             "• 1 Day = ₹2\n"
-             "• 7 Days = ₹10\n"
-             "• 30 Days = ₹30",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-
-def generate_upi_qr_code(upi_id, amount, reference):
-    """Generate QR code for UPI payment"""
-    # Create UPI URI
-    upi_uri = f"upi://pay?pa={upi_id}&pn=NaukriBot&am={amount}&cu=INR&tn={reference}"
-    
-    # Generate QR code
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=10,
-        border=4,
-    )
-    qr.add_data(upi_uri)
-    qr.make(fit=True)
-    
-    # Create an image from the QR Code
-    img = qr.make_image(fill_color="black", back_color="white")
-    
-    # Save to bytes
-    img_byte_arr = io.BytesIO()
-    img.save(img_byte_arr, format='PNG')
-    img_byte_arr.seek(0)
-    
-    return img_byte_arr
-
-def handle_payment_option(update: Update, context: CallbackContext):
-    """Handle payment option selection"""
-    query = update.callback_query
-    query.answer()
-    
-    # Get the selected option
-    option = query.data
-    user_id = str(update.effective_user.id)
-    
-    # Parse the option to get days and amount
-    days = 1
-    amount = 2
-    
-    if option == "payment_7_days":
-        days = 7
-        amount = 10
-    elif option == "payment_30_days":
-        days = 30
-        amount = 30
-    
-    # Generate a unique payment reference
-    payment_ref = f"PREMIUM_{user_id}_{int(time.time())}"
-    
-    # Store the payment reference and details in user data
-    premium_users = load_premium_users()
-    if user_id in premium_users:
-        premium_users[user_id]["pending_payment"] = {
-            "reference": payment_ref,
-            "days": days,
-            "amount": amount,
-            "timestamp": time.time()
-        }
-        save_premium_users(premium_users)
-    
-    # Create QR code for UPI payment
-    upi_id = "8329707239-2@ybl"
-    qr_code_bytes = generate_upi_qr_code(upi_id, amount, payment_ref)
-    
-    # Create payment verification button
-    keyboard = [
-        [InlineKeyboardButton("✅ I've Completed Payment", callback_data=f"verify_payment_{payment_ref}")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # First send payment instructions
-    query.edit_message_text(
-        text=f"💳 *Payment Details*\n\n"
-             f"Amount: ₹{amount}\n"
-             f"UPI ID: `{upi_id}`\n"
-             f"Reference: `{payment_ref}`\n\n"
-             f"Please scan the QR code below or make the payment using any UPI app and include the reference in the payment notes.\n\n"
-             f"After payment, click the button below to verify and activate your premium membership for {days} day{'s' if days > 1 else ''}.",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    
-    # Then send the QR code as a photo
-    context.bot.send_photo(
-        chat_id=update.effective_chat.id,
-        photo=qr_code_bytes,
-        caption=f"QR Code for ₹{amount} payment - Scan to pay"
-    )
-
-def verify_payment(update: Update, context: CallbackContext):
-    """Verify payment and request admin approval"""
-    query = update.callback_query
-    query.answer()
-    
-    user_id = str(update.effective_user.id)
-    payment_ref = query.data.replace("verify_payment_", "")
-    
-    # Load premium users
-    premium_users = load_premium_users()
-    
-    if user_id in premium_users and "pending_payment" in premium_users[user_id]:
-        pending = premium_users[user_id]["pending_payment"]
-        
-        if pending["reference"] == payment_ref:
-            # Mark payment as pending verification
-            premium_users[user_id]["pending_payment"]["status"] = "pending_verification"
-            premium_users[user_id]["pending_payment"]["verification_requested_at"] = time.time()
-            
-            # Save updated premium users
-            save_premium_users(premium_users)
-            
-            # Create keyboard with admin contact
-            keyboard = [
-                [InlineKeyboardButton("📱 Contact Admin", url="https://t.me/SocialAdLinker")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Notify user that payment is being verified and to send screenshot
-            query.edit_message_text(
-                text="🔍 *Payment Verification In Progress*\n\n"
-                     "Your payment is being verified by our admin.\n\n"
-                     "📸 *Please send your payment screenshot to @SocialAdLinker*\n"
-                     "Include your User ID: `" + user_id + "` in your message.\n\n"
-                     "You will be notified once your payment is verified and your premium membership is activated.",
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
-            
-            # Notify admin about pending verification
-            days = pending["days"]
-            amount = pending["amount"]
-            admin_message = (
-                f"🔔 *Payment Verification Required*\n\n"
-                f"User ID: `{user_id}`\n"
-                f"Reference: `{payment_ref}`\n"
-                f"Amount: ₹{amount}\n"
-                f"Duration: {days} day{'s' if days > 1 else ''}\n\n"
-                f"User has been instructed to send payment screenshot.\n"
-                f"Use /approve_{payment_ref} to approve or /reject_{payment_ref} to reject."
-            )
-            
-            # Send notification to admin if admin chat ID is available
-            if ADMIN_CHAT_ID:
-                try:
-                    context.bot.send_message(
-                        chat_id=ADMIN_CHAT_ID,
-                        text=admin_message,
-                        parse_mode='Markdown'
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send notification to admin: {e}")
-            
-            logger.info(f"Payment verification requested by user {user_id} for {days} days - Ref: {payment_ref}")
-        else:
-            query.edit_message_text(
-                text="❌ Payment verification failed. Invalid reference."
-            )
-
-def approve_payment(update: Update, context: CallbackContext):
-    """Admin command to approve a payment"""
-    # Check if the user is admin
-    user = update.effective_user
-    user_id = str(user.id)
-    username = user.username
-    
-    # Set admin chat ID if this is the admin
-    global ADMIN_CHAT_ID
-    if username == ADMIN_USERNAME and ADMIN_CHAT_ID is None:
-        ADMIN_CHAT_ID = user_id
-        logger.info(f"Admin chat ID set to {ADMIN_CHAT_ID}")
-    
-    # Only allow admin to approve payments
-    if username != ADMIN_USERNAME:
-        update.message.reply_text("⛔ You are not authorized to use this command.")
-        return
-    
-    # Get the payment reference from the command
-    command_text = update.message.text
-    if not command_text.startswith("/approve_"):
-        update.message.reply_text("❌ Invalid command format. Use /approve_REFERENCE")
-        return
-    
-    payment_ref = command_text.replace("/approve_", "")
-    
-    # Find the user with this pending payment
-    premium_users = load_premium_users()
-    target_user_id = None
-    
-    for uid, user_data in premium_users.items():
-        if "pending_payment" in user_data and user_data["pending_payment"].get("reference") == payment_ref:
-            target_user_id = uid
-            break
-    
-    if not target_user_id:
-        update.message.reply_text(f"❌ No pending payment found with reference: {payment_ref}")
-        return
-    
-    # Get payment details
-    pending = premium_users[target_user_id]["pending_payment"]
-    days = pending["days"]
-    
-    # Set premium membership to lifetime (using a very distant future date)
-    expiry_time = datetime.now() + timedelta(days=36500)  # ~100 years (effectively lifetime)
-    
-    # Update user's premium status
-    premium_users[target_user_id]["expiry_time"] = expiry_time.timestamp()
-    premium_users[target_user_id]["is_premium"] = True
-    premium_users[target_user_id]["is_lifetime"] = True  # Add lifetime flag
-    premium_users[target_user_id]["pending_payment"]["status"] = "approved"
-    premium_users[target_user_id]["pending_payment"]["approved_at"] = time.time()
-    premium_users[target_user_id]["pending_payment"]["approved_by"] = username
-    
-    # Save updated premium users
-    save_premium_users(premium_users)
-    
-    # Notify admin
-    update.message.reply_text(
-        f"✅ Payment approved for User ID: {target_user_id}\n"
-        f"Premium membership activated for LIFETIME.\n"
-        f"Expiry: {expiry_time.strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    
-    # Notify user
-    try:
-        context.bot.send_message(
-            chat_id=target_user_id,
-            text=f"✅ *Payment Verified!*\n\n"
-                 f"Your premium membership has been activated for LIFETIME.\n"
-                 f"You will now receive job alerts matching your preferences.",
-            parse_mode='Markdown'
-        )
-    except Exception as e:
-        logger.error(f"Failed to send approval notification to user {target_user_id}: {e}")
-    
-    logger.info(f"Payment approved for user {target_user_id} - LIFETIME premium activated")
-
-def is_premium_user(user_id):
-    """Check if a user is a premium user"""
-    premium_users = load_premium_users()
-    
-    if user_id in premium_users:
-        # All registered users are now lifetime premium
-        if not premium_users[user_id].get("is_premium", False):
-            premium_users[user_id]["is_premium"] = True
-            premium_users[user_id]["is_lifetime"] = True
-            premium_users[user_id]["expiry_time"] = float('inf')
-            save_premium_users(premium_users)
-        return True
-    
-    return False
-
-def reject_payment(update: Update, context: CallbackContext):
-    """Admin command to reject a payment"""
-    # Check if the user is admin
-    user = update.effective_user
-    username = user.username
-    
-    # Only allow admin to reject payments
-    if username != ADMIN_USERNAME:
-        update.message.reply_text("⛔ You are not authorized to use this command.")
-        return
-    
-    # Get the payment reference from the command
-    command_text = update.message.text
-    if not command_text.startswith("/reject_"):
-        update.message.reply_text("❌ Invalid command format. Use /reject_REFERENCE")
-        return
-    
-    payment_ref = command_text.replace("/reject_", "")
-    
-    # Find the user with this pending payment
-    premium_users = load_premium_users()
-    target_user_id = None
-    
-    for uid, user_data in premium_users.items():
-        if "pending_payment" in user_data and user_data["pending_payment"].get("reference") == payment_ref:
-            target_user_id = uid
-            break
-    
-    if not target_user_id:
-        update.message.reply_text(f"❌ No pending payment found with reference: {payment_ref}")
-        return
-    
-    # Mark payment as rejected
-    premium_users[target_user_id]["pending_payment"]["status"] = "rejected"
-    premium_users[target_user_id]["pending_payment"]["rejected_at"] = time.time()
-    premium_users[target_user_id]["pending_payment"]["rejected_by"] = username
-    
-    # Save updated premium users
-    save_premium_users(premium_users)
-    
-    # Notify admin
-    update.message.reply_text(
-        f"❌ Payment rejected for User ID: {target_user_id}\n"
-        f"Reference: {payment_ref}"
-    )
-    
-    # Notify user
-    try:
-        # Create renewal button
-        keyboard = [
-            [InlineKeyboardButton("🔄 Try Again", callback_data="renew_membership")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        context.bot.send_message(
-            chat_id=target_user_id,
-            text=f"❌ *Payment Verification Failed*\n\n"
-                 f"We could not verify your payment. This could be due to:\n"
-                 f"• Payment not received\n"
-                 f"• Incorrect payment reference\n"
-                 f"• Insufficient payment amount\n\n"
-                 f"Please contact @SocialAdLinker for assistance or try again.",
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Failed to send rejection notification to user {target_user_id}: {e}")
-    
-    logger.info(f"Payment rejected for user {target_user_id} - Ref: {payment_ref}")
-
-def approve_payment(user_id, payment_ref):
-    """Approve payment and activate premium membership (called by admin or auto-approval)"""
-    # Load premium users
-    premium_users = load_premium_users()
-    
-    if user_id in premium_users and "pending_payment" in premium_users[user_id]:
-        pending = premium_users[user_id]["pending_payment"]
-        
-        if pending["reference"] == payment_ref and pending.get("status") == "pending_verification":
-            days = pending["days"]
-            
-            # Set premium membership to lifetime (using a very distant future date)
-            expiry_time = datetime.now() + timedelta(days=36500)  # ~100 years (effectively lifetime)
-            
-            # Update user data with lifetime expiry time
-            premium_users[user_id]["expiry_time"] = expiry_time.timestamp()
-            premium_users[user_id]["is_premium"] = True
-            
-            # Remove pending payment
-            premium_users[user_id].pop("pending_payment", None)
-            
-            # Save updated premium users
-            save_premium_users(premium_users)
-            
-            # Send confirmation message to user
-            try:
-                updater.bot.send_message(
-                    chat_id=user_id,
-                    text=f"✅ *Payment Verified!*\n\n"
-                         f"Your premium membership has been activated for LIFETIME.\n"
-                         f"You will now receive job alerts matching your preferences.",
-                    parse_mode='Markdown'
-                )
-                logger.info(f"Premium membership activated for user {user_id} for {days} days")
-            except Exception as e:
-                logger.error(f"Failed to send confirmation to user {user_id}: {e}")
-    else:
-        logger.error(f"Failed to approve payment for user {user_id}: User or payment not found")
-
-def reject_payment(user_id, payment_ref, reason="Payment not received"):
-    """Reject payment (called by admin)"""
-    # Load premium users
-    premium_users = load_premium_users()
-    
-    if user_id in premium_users and "pending_payment" in premium_users[user_id]:
-        pending = premium_users[user_id]["pending_payment"]
-        
-        if pending["reference"] == payment_ref and pending.get("status") == "pending_verification":
-            # Remove pending payment
-            premium_users[user_id].pop("pending_payment", None)
-            
-            # Save updated premium users
-            save_premium_users(premium_users)
-            
-            # Send rejection message to user
-            try:
-                updater.bot.send_message(
-                    chat_id=user_id,
-                    text=f"❌ *Payment Rejected*\n\n"
-                         f"Your payment could not be verified.\n"
-                         f"Reason: {reason}\n\n"
-                         f"Please try again or contact support if you believe this is an error.",
-                    parse_mode='Markdown'
-                )
-                logger.info(f"Payment rejected for user {user_id}: {reason}")
-            except Exception as e:
-                logger.error(f"Failed to send rejection to user {user_id}: {e}")
-    else:
-        logger.error(f"Failed to reject payment for user {user_id}: User or payment not found")
-
-
-def check_expired_memberships():
-    """Periodically check for expired memberships"""
-    while True:
-        # All premium memberships are now lifetime - no expiration checks needed
-        logger.info("All premium memberships are now lifetime - no expiration checks needed")
-        # Sleep for a day before logging again
-        time.sleep(86400)
-        # All users are now lifetime premium - no expiration occurs
-        # No expiry notification needed
-        logger.info(f"All users have lifetime premium membership")
-        
-        save_premium_users(premium_users)
-        time.sleep(60)  # Check every minute
-
-def edit_job_keywords(update: Update, context: CallbackContext) -> int:
-    """Handle edit job keywords button"""
-    query = update.callback_query
-    query.answer()
-    user_id = str(query.from_user.id)
-    
-    query.edit_message_text(
-        text="🔍 Please enter minimum 1 and maximum 5 keywords for your job search separated by commas (,):\n\n"
-             "Example: developer,python,web,frontend,react 💻"
+# ─────────────────────────────────────────────
+# Edit preference callbacks
+# ─────────────────────────────────────────────
+async def edit_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "🔍 Enter new keywords (comma-separated):\nExample: `python, devops, aws`",
+        parse_mode="Markdown"
     )
     return TITLE
 
-def edit_experience(update: Update, context: CallbackContext) -> int:
-    """Handle edit experience button"""
-    query = update.callback_query
-    query.answer()
-    user_id = str(query.from_user.id)
-    
-    query.edit_message_text(
-        text="⏳ Please enter your years of experience (e.g., 2, 5, 8):"
+
+async def edit_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "⏳ Enter your years of experience (e.g. `4`):",
+        parse_mode="Markdown"
     )
     return EXPERIENCE
 
-def edit_location(update: Update, context: CallbackContext) -> int:
-    """Handle edit location button"""
-    query = update.callback_query
-    query.answer()
-    user_id = str(query.from_user.id)
-    
-    query.edit_message_text(
-        text="📍 Please enter your preferred job location (e.g., Mumbai, Delhi, Bangalore):"
+
+async def edit_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "📍 Enter your preferred location (e.g. `Mumbai, Pune`):",
+        parse_mode="Markdown"
     )
     return LOCATION
 
-def keep_preferences(update: Update, context: CallbackContext) -> int:
-    """Handle keep current preferences button"""
-    query = update.callback_query
-    query.answer()
-    user_id = str(query.from_user.id)
-    
-    # Load premium users to get current preferences
-    premium_users = load_premium_users()
-    current_prefs = premium_users[user_id]["preferences"]
-    
-    query.edit_message_text(
-        text="👍 Great! Your preferences remain unchanged:\n\n"
-             f"🔍 Keywords: {current_prefs.get('job_keywords', 'Not set')}\n"
-             f"⏳ Experience: {current_prefs.get('experience', 'Not set')} years\n"
-             f"📍 Location: {current_prefs.get('location', 'Not set')}\n\n"
-             f"You will continue to receive job alerts matching these preferences."
+
+async def keep_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    user_id = str(update.callback_query.from_user.id)
+    users = load_premium_users()
+    prefs = users[user_id]["preferences"]
+    await update.callback_query.edit_message_text(
+        f"👍 Preferences unchanged:\n\n"
+        f"🔍 Keywords: `{prefs.get('job_keywords', 'Not set')}`\n"
+        f"⏳ Experience: `{prefs.get('experience', 'Not set')}` yrs\n"
+        f"📍 Location: `{prefs.get('location', 'Not set')}`",
+        parse_mode="Markdown"
     )
     return ConversationHandler.END
 
-def send_expiry_notification(user_id, time_left):
-    """Send notification about premium membership expiry"""
-    # All premium memberships are now lifetime - no expiry notifications needed
-    logger.info(f"Expiry notifications disabled - all users have lifetime premium membership")
-    return
-    
-    # The code below is no longer used since all memberships are lifetime
-    try:
-        if False:  # This condition will never be true
-            # Create inline keyboard with renewal button
-            keyboard = [
-                [InlineKeyboardButton("💰 Renew Membership", callback_data="renew_membership")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            message = "⚠️ YOUR PREMIUM MEMBERSHIP HAS EXPIRED! ⚠️\n\n" \
-                     "Your countdown has reached zero.\n" \
-                     "Premium features are no longer available.\n\n" \
-                     "To continue receiving job alerts matching your preferences, please renew your premium membership."
-            
-            updater.bot.send_message(chat_id=user_id, text=message, reply_markup=reply_markup)
-            logger.info(f"Sent expiry notification with renewal button to user {user_id}")
-        else:
-            message = f"⏳ Your premium membership will expire in {time_left}!"
-            
-            updater.bot.send_message(chat_id=user_id, text=message)
-            logger.info(f"Sent expiry notification to user {user_id}: {time_left}")
-    except Exception as e:
-        logger.error(f"Failed to send expiry notification to user {user_id}: {e}")
 
-def run_premium_bot(telegram_token):
-    """Run the premium bot"""
-    try:
-        # Validate token format
-        if not telegram_token or ":" not in telegram_token:
-            logger.error("Invalid Telegram token format")
-            raise ValueError("Invalid Telegram token format. Token should contain a colon.")
-            
-        global updater
-        updater = Updater(telegram_token)
-        dispatcher = updater.dispatcher
-        
-        # Create conversation handler for collecting job preferences
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                TITLE: [MessageHandler(Filters.text & ~Filters.command, job_title)],
-                EXPERIENCE: [MessageHandler(Filters.text & ~Filters.command, experience)],
-                LOCATION: [MessageHandler(Filters.text & ~Filters.command, location)],
-                EDIT_PREFERENCES: [
-                    CallbackQueryHandler(edit_job_keywords, pattern='^edit_keywords$'),
-                    CallbackQueryHandler(edit_experience, pattern='^edit_experience$'),
-                    CallbackQueryHandler(edit_location, pattern='^edit_location$'),
-                    CallbackQueryHandler(keep_preferences, pattern='^keep_preferences$'),
-                ],
-            },
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-        
-        dispatcher.add_handler(conv_handler)
-        
-        # Register command handlers
-        dispatcher.add_handler(CommandHandler("renew_membership", renew_membership))
-        
-        # Register callback handlers for renewal flow
-        dispatcher.add_handler(CallbackQueryHandler(renew_membership_callback, pattern="^renew_membership$"))
-        dispatcher.add_handler(CallbackQueryHandler(handle_payment_option, pattern="^payment_"))
-        dispatcher.add_handler(CallbackQueryHandler(verify_payment, pattern="^verify_payment_"))
-        
-        # Register admin command handlers for payment approval/rejection
-        # These use MessageHandler with regex to handle commands with dynamic payment references
-        dispatcher.add_handler(MessageHandler(Filters.regex(r'^/approve_'), approve_payment))
-        dispatcher.add_handler(MessageHandler(Filters.regex(r'^/reject_'), reject_payment))
-        
-        # Start the expiry checker in a separate thread
-        expiry_thread = threading.Thread(target=check_expired_memberships)
-        expiry_thread.daemon = True
-        expiry_thread.start()
-        
-        # Start the bot in polling mode (without blocking with idle())
-        updater.start_polling()
-        logger.info("Premium bot started")
-        
-        # Don't call updater.idle() when running in a thread
-        # Just return the updater so it stays alive with the main thread
-        return updater
-    except Exception as e:
-        logger.error(f"Error starting premium bot: {e}")
-        raise
+# ─────────────────────────────────────────────
+# /cancel
+# ─────────────────────────────────────────────
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Setup cancelled. Use /start to begin again.")
+    return ConversationHandler.END
+
+
+# ─────────────────────────────────────────────
+# /mypreferences
+# ─────────────────────────────────────────────
+async def my_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    users = load_premium_users()
+    if user_id not in users:
+        await update.message.reply_text("You are not registered. Use /start to set up.")
+        return
+    prefs = users[user_id].get("preferences", {})
+    await update.message.reply_text(
+        f"📋 *Your current preferences:*\n\n"
+        f"🔍 Keywords: `{prefs.get('job_keywords', 'Not set')}`\n"
+        f"⏳ Experience: `{prefs.get('experience', 'Not set')}` yrs\n"
+        f"📍 Location: `{prefs.get('location', 'Not set')}`",
+        parse_mode="Markdown"
+    )
+
+
+# ─────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────
+def run_premium_bot(token=None):
+    token = token or PREMIUM_BOT_TOKEN
+
+    app = Application.builder().token(token).build()
+
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, job_title)],
+            EXPERIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, experience_handler)],
+            LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, location_handler)],
+            EDIT_PREFERENCES: [
+                CallbackQueryHandler(edit_keywords,    pattern="^edit_keywords$"),
+                CallbackQueryHandler(edit_experience,  pattern="^edit_experience$"),
+                CallbackQueryHandler(edit_location,    pattern="^edit_location$"),
+                CallbackQueryHandler(keep_preferences, pattern="^keep_preferences$"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    app.add_handler(conv)
+    app.add_handler(CommandHandler("mypreferences", my_preferences))
+
+    logger.info("Starting Premium Naukri Bot (v20 async)...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
-    # Create the Updater and pass it your bot's token
-    telegram_token = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
-    run_premium_bot(telegram_token)
+    run_premium_bot()

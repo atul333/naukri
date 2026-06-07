@@ -1174,6 +1174,77 @@ class NaukriJobScraper:
                 # If file is empty or invalid, ignore
                 pass
     
+    async def send_to_premium_users(self, job):
+        """
+        Check all premium users in premium_users.json.
+        If their keywords/location match this job, send it directly to them.
+        """
+        try:
+            if not os.path.exists("premium_users.json"):
+                return
+            with open("premium_users.json", "r", encoding="utf-8") as f:
+                users = json.load(f)
+            
+            bot = Bot(token="8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8")
+            premium_bot_token = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
+            
+            for user_id, user_data in users.items():
+                if not user_data.get("is_premium", False):
+                    continue
+                prefs = user_data.get("preferences", {})
+                keywords_str = prefs.get("job_keywords", "").lower()
+                user_location = prefs.get("location", "").lower()
+                
+                if not keywords_str:
+                    continue
+                
+                # Match keywords — any keyword must appear in job title or company
+                keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+                job_text = (job['title'] + " " + job['company']).lower()
+                keyword_match = any(kw in job_text for kw in keywords)
+                
+                # Match location — user's location must appear in job location
+                job_location = job.get('location', '').lower()
+                location_match = (not user_location) or (user_location in job_location) or (job_location in user_location)
+                
+                if keyword_match and location_match:
+                    try:
+                        # Build matching job message
+                        encrypted_link = self.encrypt_job_url(job['apply_link'])
+                        experience = job.get('experience', 'Not specified')
+                        ctc = job.get('ctc', 'NA') or 'NA'
+                        skills = job.get('skills', [])
+                        import re as _re
+                        if skills:
+                            hashtags = ' '.join('#' + _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', '')) for s in skills if s)
+                        else:
+                            title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job['title'])
+                            hashtags = ' '.join(f"#{w}" for w in title_words if len(w) > 2)
+                        
+                        msg = (
+                            f"🔔 *Job Match Alert!*\n\n"
+                            f"📌 {job['title']}\n\n"
+                            f"🏢 Company: {job['company']}\n\n"
+                            f"⏳ Experience: {experience}\n\n"
+                            f"📍 Location: {job['location']}\n\n"
+                            f"💰 CTC: {ctc}\n\n"
+                            f"{hashtags}\n\n"
+                            f"🔗 Apply Link: {encrypted_link}"
+                        )
+                        
+                        bot2 = Bot(token=premium_bot_token)
+                        await bot2.send_message(
+                            chat_id=user_id,
+                            text=msg,
+                            parse_mode="Markdown",
+                            disable_web_page_preview=True
+                        )
+                        logger.info(f"✅ Sent matching job to premium user {user_id}: {job['title']}")
+                    except Exception as ue:
+                        logger.error(f"Failed to send to premium user {user_id}: {ue}")
+        except Exception as e:
+            logger.error(f"Error in send_to_premium_users: {e}")
+
     async def process_jobs(self):
         """Every minute: scrape Naukri, pick the #1 latest job, post if not already sent."""
         try:
@@ -1201,13 +1272,16 @@ class NaukriJobScraper:
                 logger.info(f"Job already posted: {job['title']} — skipping")
                 return
             
-            # Post to Telegram
+            # Post to public Telegram channel
             success = await self.post_job_to_telegram(job)
             if success:
                 # Mark as posted
                 with open(posted_urls_file, "a", encoding="utf-8") as f:
                     f.write(f"{job['apply_link']}\n")
                 logger.info(f"✅ Posted: {job['title']}")
+                
+                # Send to matching premium users
+                await self.send_to_premium_users(job)
             
             logger.info("Job processing completed")
         except Exception as e:
