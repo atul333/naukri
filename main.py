@@ -727,6 +727,20 @@ class NaukriJobScraper:
                                                 break
                                     
                                     job_id = f"job_{hashlib.md5((title + company).encode()).hexdigest()}"
+                                    
+                                    # Skill tags — shown as chips/tags on the job card
+                                    skills = []
+                                    skill_els = job_card.select(
+                                        '.tags-gt li, .tags-gt span, '
+                                        'li.dot-gt span, .chip, '
+                                        '[class*="tag"] li, [class*="skill"] li, '
+                                        'ul.tags li, .tag-list li'
+                                    )
+                                    for s in skill_els:
+                                        skill_text = s.text.strip().strip('·').strip()
+                                        if skill_text and len(skill_text) > 1:
+                                            skills.append(skill_text)
+                                    
                                     job = {
                                         'job_id': job_id,
                                         'title': title,
@@ -735,6 +749,7 @@ class NaukriJobScraper:
                                         'experience': experience,
                                         'posted_date': posted_date,
                                         'apply_link': apply_link,
+                                        'skills': skills,
                                         'category': category_name,
                                         'timestamp': datetime.now().isoformat()
                                     }
@@ -1065,9 +1080,21 @@ class NaukriJobScraper:
         # Format message to match the required format (plain text, no Markdown)
         import re as _re
         
-        # Generate hashtags from job title
-        title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job['title'])
-        hashtags = ' '.join([f"#{w}" for w in title_words if len(w) > 2])
+        # Generate hashtags from skill tags (e.g. FastAPI, React, Python)
+        # Falls back to title words if no skills found
+        import re as _re
+        skills = job.get('skills', [])
+        if skills:
+            # Convert each skill to a clean hashtag: remove spaces/special chars
+            hashtags = ' '.join(
+                '#' + _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
+                for s in skills if s
+            )
+        else:
+            # Fallback: use words from job title
+            title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job['title'])
+            hashtags = ' '.join([f"#{w}" for w in title_words if len(w) > 2])
+        
         if not hashtags:
             hashtags = f"#{job.get('category', 'IT')}Jobs"
         
