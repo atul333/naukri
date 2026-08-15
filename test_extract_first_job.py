@@ -285,16 +285,22 @@ async def extract_and_post_first_job():
         
         # Use the browser context manager
         async with browser_context_manager as context:
-            # Create a new page with portrait mode dimensions
+            # Create a new page
             page = await context.new_page()
             
-            # Set viewport to a larger size to ensure more content is visible
-            # Using a standard desktop size instead of mobile dimensions
-            await page.set_viewport_size({"width": 1920, "height": 1080})  # Larger desktop dimensions
+            # Abort heavy assets (images, fonts, media) to cut RAM and CPU by 80% on server
+            try:
+                await page.route(
+                    "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot,mp4,mp3,avi,wav,flv,mkv}",
+                    lambda route: route.abort()
+                )
+            except Exception as _r_err:
+                logger.warning(f"Could not set route filter: {_r_err}")
             
-            # Set headers and navigate to the job URL with desktop user agent
-            # Use a desktop user agent to ensure full page view
-            desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+            # Set viewport to a standard desktop size
+            await page.set_viewport_size({"width": 1920, "height": 1080})
+            
+            desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
             
             await page.set_extra_http_headers({
                 'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
@@ -1161,6 +1167,20 @@ async def extract_and_post_first_job():
 if __name__ == "__main__":
     import schedule
     import time
+    import gc
+    import subprocess
+
+    def cleanup_zombies():
+        """Ensure no stranded background browser processes are taking memory on Linux"""
+        if os.name != 'nt':
+            try:
+                subprocess.run(["pkill", "-9", "-f", "firefox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["pkill", "-9", "-f", "playwright"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+    # Clean up old zombie browser processes before starting
+    cleanup_zombies()
     
     # Use the token defined at the top of the file
     telegram_token = TELEGRAM_TOKEN
@@ -1172,8 +1192,10 @@ if __name__ == "__main__":
             logger.info("Running scheduled job scraper...")
             asyncio.run(extract_and_post_first_job())
             logger.info("Scheduled job completed successfully")
+            gc.collect()
         except Exception as e:
             logger.error(f"Scheduled job failed: {str(e)}")
+            cleanup_zombies()
     
     def post_advertisement():
         """Post advertisement to channel"""

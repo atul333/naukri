@@ -1,15 +1,17 @@
 #!/bin/bash
 echo "============================================"
-echo " Naukri.com Job Scraper - Full Automation"
+echo " Job Scraper - Full Automation"
 echo "============================================"
 echo ""
-echo "This will:"
-echo "  1. Open Naukri.com IT Jobs page"
-echo "  2. Sort results by Date (newest first)"
-echo "  3. Extract the first (latest) job"
-echo "  4. Post it to Telegram channel"
-echo "  5. Repeat every 60 seconds automatically"
-echo ""
-echo "Press Ctrl+C to stop."
-echo ""
+
+# Clean up any leftover zombie browser processes from previous runs
+pkill -9 -f firefox 2>/dev/null || true
+pkill -9 -f playwright 2>/dev/null || true
+
+# Activate venv if present
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+fi
+
 python3 test_extract_first_job.py
+

@@ -98,24 +98,31 @@ class NaukriJobScraper:
             user_agent = self.scraper.get_random_user_agent()
             viewport = self.scraper.get_random_viewport()
 
-            # ── Use Firefox instead of Chromium ────────────────────────────────────────
-            # Naukri blocks headless Chromium on AWS via server-side fingerprinting.
-            # Firefox has a completely different TLS fingerprint and headless signature,
-            # making it much harder to detect and block.
-            # Firefox does NOT use Chromium's --flags, so we pass a minimal set.
-            logger.info("Launching Firefox (headless) to bypass Chromium bot detection...")
+            # ── Use Firefox (Ultra-Low Memory & CPU Optimized) ────────────────────────
+            logger.info("Launching Firefox (headless, low-resource profile)...")
             self.browser = await self.playwright.firefox.launch(
                 headless=True,
                 firefox_user_prefs={
-                    # Disable telemetry / first-run prompts
+                    # Disable telemetry & data reporting
                     "datareporting.policy.dataSubmissionPolicyAccepted": True,
                     "datareporting.policy.dataSubmissionEnabled":        False,
                     "toolkit.telemetry.enabled":                         False,
-                    # Set a realistic window size
                     "browser.startup.homepage":                          "about:blank",
+
+                    # ── Critical RAM & CPU Optimizations (Prevents 10+ child processes) ──
+                    "dom.ipc.processCount":                              1,      # Single content process! (Prevents multi-process RAM explosion)
+                    "dom.ipc.processCount.web":                          1,      # 1 web worker
+                    "browser.cache.memory.enable":                       False,  # Don't cache web assets in RAM
+                    "browser.sessionhistory.max_entries":                1,      # Minimal history retention
+                    "browser.sessionhistory.max_total_viewers":          0,      # Don't retain cached page viewers in memory
+                    "image.animation_mode":                              "none", # Disable GIF / CSS animations
+                    "media.peerconnection.enabled":                      False,  # Disable WebRTC background workers
+                    "media.navigator.enabled":                           False,  # Disable camera/mic workers
+                    "media.autoplay.default":                            5,      # Block all media autoplay
+                    "layers.acceleration.disabled":                      True,   # Disable GPU hardware acceleration attempts
                 }
             )
-            logger.info("Firefox launched successfully")
+            logger.info("Firefox launched successfully (single-process mode)")
 
             
             # Configure context for Firefox
@@ -261,12 +268,21 @@ class NaukriJobScraper:
             return self.context
             
         async def __aexit__(self, exc_type, exc_val, exc_tb):
-            if self.context:
-                await self.context.close()
-            if self.browser:
-                await self.browser.close()
-            if self.playwright:
-                await self.playwright.stop()
+            try:
+                if self.context:
+                    await self.context.close()
+            except Exception:
+                pass
+            try:
+                if self.browser:
+                    await self.browser.close()
+            except Exception:
+                pass
+            try:
+                if self.playwright:
+                    await self.playwright.stop()
+            except Exception:
+                pass
     
     def get_browser_context(self):
         """Return a context manager for browser context"""
