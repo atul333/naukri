@@ -121,6 +121,13 @@ class NaukriJobScraper:
                     "browser.tabs.remote.autostart":                     False,  # Completely disable multi-process (e10s) mode!
                     "dom.ipc.processCount":                              1,      # Single process
                     "dom.ipc.processCount.web":                          1,
+                    "dom.workers.maxPerDomain":                          1,      # Minimal web worker threads
+                    "network.http.max-connections":                      4,      # Limit network socket threads
+                    "network.http.max-connections-per-server":           2,
+                    "network.http.max-persistent-connections-per-server": 1,
+                    "layers.omtp.enabled":                               False,  # Disable off-main-thread painting thread pool
+                    "javascript.options.wasm":                           False,  # Disable WebAssembly engine threads
+                    "javascript.options.asyncstack":                     False,
                     "gfx.webrender.all":                                 False,  # Disable CPU WebRender software rasterizer
                     "gfx.webrender.software":                            False,  # Disable software fallback renderer
                     "layers.acceleration.disabled":                      True,   # Disable acceleration threads
