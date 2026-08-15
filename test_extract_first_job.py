@@ -326,401 +326,107 @@ async def extract_and_post_first_job():
                 'Upgrade-Insecure-Requests': '1'
             })
             
-            await page.goto(job_url, wait_until='load', timeout=90000)
-
-            # ── Try Naukri's internal JSON API first (fast, no bot detection) ─────────────
-            # This bypasses the React SPA rendering delay that blocks headless Chromium
-            # on Linux/AWS servers. Falls back to browser scraping if the API fails.
-            logger.info("Trying Naukri internal API for job data...")
-            api_job = None
+            # Use networkidle so the browser waits for React to finish all API calls
+            # before we try to interact. domcontentloaded/load fires too early for SPAs.
+            logger.info("Navigating and waiting for network to be idle (React data loaded)...")
             try:
-                import aiohttp
-                api_url = (
-                    "https://www.naukri.com/jobapi/v3/search"
-                    "?noOfResults=1"
-                    "&urlType=search_by_keyword"
-                    "&searchType=adv"
-                    "&keyword=it"
-                    "&pageNo=1"
-                    "&seoKey=it-jobs"
-                    "&sort=1"          # sort=1 → newest first
-                    "&src=gnbjobs_homepage_srch"
-                )
-                api_headers = {
-                    "accept":           "application/json",
-                    "appid":            "109",
-                    "systemid":         "Naukri",
-                    "user-agent":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "referer":          "https://www.naukri.com/it-jobs",
-                    "accept-language":  "en-US,en;q=0.9",
-                }
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(api_url, headers=api_headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json(content_type=None)
-                            jobs_list = data.get("jobDetails", [])
-                            if jobs_list:
-                                j = jobs_list[0]
-                                api_job = {
-                                    "title":      j.get("title", "Unknown Title"),
-                                    "company":    j.get("companyName", "Unknown Company"),
-                                    "experience": j.get("experienceText", "Not specified"),
-                                    "location":   ", ".join(j.get("placeholders", [{}])[1].get("label", "").split(",")[:2]) if len(j.get("placeholders", [])) > 1 else "Not specified",
-                                    "ctc":        j.get("salary", "NA") or "NA",
-                                    "apply_link": j.get("jdURL", "") or j.get("jobId", ""),
-                                    "skills":     [s.get("label", "") for s in j.get("tagsAndSkills", []) if s.get("label")],
-                                    "job_id":     str(j.get("jobId", "unknown")),
-                                }
-                                # Ensure apply_link is a full URL
-                                if api_job["apply_link"] and not api_job["apply_link"].startswith("http"):
-                                    api_job["apply_link"] = "https://www.naukri.com" + api_job["apply_link"]
-                                logger.info(f"API returned job: {api_job['title']} at {api_job['company']}")
-                            else:
-                                logger.warning("API returned 0 jobs — will fall back to browser scraping")
-                        else:
-                            logger.warning(f"Naukri API returned HTTP {resp.status} — will fall back to browser scraping")
-            except Exception as _api_err:
-                logger.warning(f"Naukri API call failed: {_api_err} — will fall back to browser scraping")
+                await page.goto(job_url, wait_until='networkidle', timeout=90000)
+                logger.info("Network idle — page fully loaded")
+            except Exception as _nav_err:
+                # networkidle can time out on slow servers; that's OK — page may still have content
+                logger.warning(f"networkidle timed out ({_nav_err}) — reading page as-is")
 
-            # ── If API returned a job, post it immediately and return ────────────────────
-            if api_job:
-                posted_urls_file = "posted_job_urls.txt"
-                if not os.path.exists(posted_urls_file):
-                    with open(posted_urls_file, "w", encoding="utf-8") as f:
-                        f.write("")
-                with open(posted_urls_file, "r", encoding="utf-8") as f:
-                    posted_urls = set(f.read().splitlines())
-
-                if api_job["apply_link"] in posted_urls:
-                    logger.info(f"API job already posted: {api_job['title']} — skipping")
-                    return
-
-                # Encrypt link and build message
-                encrypted_link = scraper.encrypt_job_url(api_job["apply_link"])
-                import re as _re
-                skills = api_job.get("skills", [])
-                if skills:
-                    hashtag_str = " ".join(
-                        "#" + _re.sub(r"[^a-zA-Z0-9]", "", s.title().replace(" ", ""))
-                        for s in skills if s
-                    )
-                else:
-                    title_words = _re.findall(r"[A-Za-z][a-zA-Z0-9]+", api_job["title"])
-                    hashtag_str = " ".join(f"#{w}" for w in title_words if len(w) > 2)
-
-                message = (
-                    f"📌 {api_job['title']}\n\n"
-                    f"🏢 Company: {api_job['company']}\n\n"
-                    f"⏳ Experience: {api_job['experience']}\n\n"
-                    f"📍 Location: {api_job['location']}\n\n"
-                    f"💰 CTC: {api_job['ctc']}\n\n"
-                    f"{hashtag_str}\n\n"
-                    f"🔗 Apply Link: {encrypted_link}"
-                )
-
-                logger.info("Attempting to send API job to Telegram")
-                result = await scraper.send_telegram_message(message, parse_mode=None)
-                if result:
-                    with open(posted_urls_file, "a", encoding="utf-8") as f:
-                        f.write(f"{api_job['apply_link']}\n")
-                    logger.info(f"✅ Posted API job to Telegram: {api_job['title']}")
-
-                    # Send to premium users
-                    channel_id = "@IT_Job_openings_Naukri"
-                    await send_job_to_matching_premium_users(
-                        api_job["title"], message, scraper.telegram_token,
-                        api_job["experience"], api_job["location"], api_job["apply_link"]
-                    )
-                    check_and_send_advertisement(scraper.telegram_token, channel_id)
-                else:
-                    logger.warning("Failed to send API job to Telegram")
-                return  # Done — no need for browser scraping
-
-            # ── Fallback: browser scraping (if API failed) ───────────────────────────────
-            # Wait for React to render with a short per-selector timeout (no more 60s hangs)
-            logger.info("Falling back to browser scraping — waiting for React to render...")
-            content_loaded = False
-            for _jsel in ['.srp-jobtuple-wrapper', 'article.jobTupleWrapper', '.jobTuple',
-                          'div[data-job-id]', '[class*="srp-jobtuple"]', '[class*="jobTuple"]', '#filter-sort']:
+            # Confirm job cards are in the DOM (up to 30 s)
+            logger.info("Waiting for job cards to appear in DOM...")
+            job_ready = False
+            for _jsel in [
+                '.srp-jobtuple-wrapper', 'article.jobTupleWrapper', '.jobTuple',
+                'div[data-job-id]', '[class*="srp-jobtuple"]', '[class*="jobTuple"]',
+                '#filter-sort',
+            ]:
                 try:
-                    await page.wait_for_selector(_jsel, timeout=10000)
-                    logger.info(f"Browser: job content found with selector: {_jsel}")
-                    content_loaded = True
+                    await page.wait_for_selector(_jsel, timeout=5000)
+                    logger.info(f"Job content confirmed in DOM: {_jsel}")
+                    job_ready = True
                     break
                 except Exception:
                     pass
-            if not content_loaded:
-                logger.warning("Browser: job content not found after 10 s per selector — reading whatever HTML is available")
+            if not job_ready:
+                logger.warning("Job cards not found — page may still be loading, adding 5 s buffer")
                 await asyncio.sleep(5)
 
 
-
-
-            # ── Pre-sort diagnostic: save HTML + screenshot to debug Linux headless issues ──
-            try:
-                pre_sort_html = await page.content()
-                with open("pre_sort_page.html", "w", encoding="utf-8") as f:
-                    f.write(pre_sort_html)
-                logger.info("Saved pre-sort page HTML to pre_sort_page.html")
-            except Exception as _de:
-                logger.warning(f"Could not save pre-sort HTML: {_de}")
-
-            try:
-                await page.screenshot(path="before_sort.png", full_page=False)
-                logger.info("Saved pre-sort screenshot to before_sort.png")
-            except Exception as _de:
-                logger.warning(f"Could not save pre-sort screenshot: {_de}")
-
-            # ── Deep page diagnostic: understand exactly what Linux headless rendered ──────
-            try:
-                deep_probe = await page.evaluate("""
-                    () => {
-                        const d = {};
-
-                        // 1. Basic page info
-                        d.title       = document.title;
-                        d.url         = window.location.href;
-                        d.totalElems  = document.querySelectorAll('*').length;
-
-                        // 2. Body text preview (first 400 chars) — reveals bot/CAPTCHA page
-                        d.bodyPreview = document.body
-                            ? document.body.innerText.trim().substring(0, 400).replace(/\\s+/g, ' ')
-                            : 'NO BODY';
-
-                        // 3. All element IDs on the page (to find sort button real ID)
-                        d.allIds = Array.from(document.querySelectorAll('[id]'))
-                            .map(el => el.id)
-                            .filter(id => id.length > 0)
-                            .slice(0, 40);
-
-                        // 4. All button elements and their text
-                        d.buttons = Array.from(document.querySelectorAll('button, [role="button"]'))
-                            .map(el => el.tagName + '#' + (el.id||'') + '.' + (el.className||'').substring(0,30)
-                                     + ' => ' + el.textContent.trim().substring(0,30))
-                            .slice(0, 20);
-
-                        // 5. Any element whose class or id contains 'sort' (case-insensitive)
-                        d.sortRelated = Array.from(document.querySelectorAll('*'))
-                            .filter(el =>
-                                (el.id && el.id.toLowerCase().includes('sort')) ||
-                                (el.className && typeof el.className === 'string' &&
-                                 el.className.toLowerCase().includes('sort'))
-                            )
-                            .map(el => el.tagName + '#' + (el.id||'') + '.' + (el.className||'').substring(0,40)
-                                     + ' => ' + el.textContent.trim().substring(0,40))
-                            .slice(0, 15);
-
-                        // 6. All h1/h2/h3 headings (reveals if it's a normal page or error page)
-                        d.headings = Array.from(document.querySelectorAll('h1,h2,h3'))
-                            .map(el => el.tagName + ': ' + el.textContent.trim().substring(0, 60))
-                            .slice(0, 10);
-
-                        // 7. Meta tags for bot detection clues
-                        d.metaRobots = (document.querySelector('meta[name="robots"]') || {content: 'none'}).content;
-
-                        return d;
-                    }
-                """)
-                logger.info(f"PAGE TITLE   : {deep_probe.get('title')}")
-                logger.info(f"PAGE URL     : {deep_probe.get('url')}")
-                logger.info(f"TOTAL ELEMS  : {deep_probe.get('totalElems')}")
-                logger.info(f"META ROBOTS  : {deep_probe.get('metaRobots')}")
-                logger.info(f"BODY PREVIEW : {deep_probe.get('bodyPreview')}")
-                logger.info(f"ALL IDs      : {deep_probe.get('allIds')}")
-                logger.info(f"BUTTONS      : {deep_probe.get('buttons')}")
-                logger.info(f"SORT ELEMS   : {deep_probe.get('sortRelated')}")
-                logger.info(f"HEADINGS     : {deep_probe.get('headings')}")
-            except Exception as _de:
-                logger.warning(f"Deep probe JS failed: {_de}")
-
-
-            # ── Wait for any interactive element to confirm JS has rendered ──────────────
-            page_ready = False
-            ready_selectors = [
-                '#filter-sort', '[id*="sort"]', 'button[class*="sort"]',
-                '.sortby', '.sort-by', '.filter-sort',
-                # fallback: any job card or heading means page rendered
-                'h2', 'article', '.jobTuple', '[class*="srp-jobtuple"]',
-            ]
-            for _rs in ready_selectors:
-                try:
-                    await page.wait_for_selector(_rs, timeout=8000)
-                    logger.info(f"Page ready — element found: {_rs}")
-                    page_ready = True
-                    break
-                except Exception:
-                    pass
-            if not page_ready:
-                logger.warning("No ready elements found — page may still be loading, waiting extra 5 s")
-                await asyncio.sleep(5)
-
-            # Check for and handle rotation message
-            try:
-                rotation_message = await page.query_selector('text="Please rotate your device"')
-                if rotation_message:
-                    logger.info("Detected rotation message, attempting to bypass...")
-                    # Execute JavaScript to remove the rotation message and any overlay
-                    await page.evaluate("""
-                        () => {
-                            // Remove rotation message elements
-                            const elements = document.querySelectorAll('*');
-                            for (const el of elements) {
-                                if (el.textContent && el.textContent.includes('rotate your device')) {
-                                    el.style.display = 'none';
-                                }
-                                // Also remove any overlay or blocking elements
-                                if (el.style && (el.style.position === 'fixed' || el.style.position === 'absolute')) {
-                                    if (el.style.zIndex > 100 || el.style.opacity < 1) {
-                                        el.style.display = 'none';
-                                    }
-                                }
-                            }
-                            // Force desktop mode
-                            document.querySelector('body').classList.remove('portrait');
-                            document.querySelector('body').classList.add('landscape');
-                            return true;
-                        }
-                    """)
-                    logger.info("Applied JavaScript fixes for rotation message")
-                    await asyncio.sleep(5)  # Wait for changes to apply
-            except Exception as e:
-                logger.warning(f"Error handling rotation message: {str(e)}")
-                # Continue anyway
-            
-            # Click on Sort by dropdown and sort by Date
+            # ── Click Sort by dropdown → Date ──────────────────────────────────────────
+            # From screenshot: page shows 'Sort by: Relevance' dropdown.
+            # Step 1: click the sort button to open the dropdown.
+            # Step 2: click 'Date' in the dropdown.
             logger.info("Attempting to sort results by Date")
             try:
                 sorted_by_date = False
 
-                # ── Strategy 1: click the sort button then the Date option ──────────────────
-                # Try many possible selectors for the sort/filter button across Naukri layouts
-                sort_button_selectors = [
-                    '#filter-sort',
-                    '[id*="sort"]',
-                    'button[class*="sort"]',
-                    'div[class*="sort"]',
-                    'span[class*="sort"]',
-                    '[data-test="sort"]',
-                    '[aria-label*="sort" i]',
-                    '[title*="sort" i]',
-                    # Naukri desktop layout
-                    '.filter-sort',
-                    '.sortby',
-                    '.sort-by',
-                ]
-
+                # Step 1: open the sort dropdown
+                # Try CSS selectors first (fast path — works on Windows)
                 sort_button = None
-                for _sbsel in sort_button_selectors:
+                for _sbsel in ['#filter-sort', '[id*="sort"]', 'div[class*="sort"]',
+                               'span[class*="sort"]', '.filter-sort', '.sortby', '.sort-by']:
                     try:
                         sort_button = await page.query_selector(_sbsel)
                         if sort_button:
-                            logger.info(f"Found sort button with selector: {_sbsel}")
+                            logger.info(f"Found sort button: {_sbsel}")
                             break
                     except Exception:
                         pass
 
                 if sort_button:
-                    current_sort = await sort_button.inner_text()
-                    logger.info(f"Current sort option: {current_sort.strip()}")
-                    if "date" in current_sort.lower():
+                    txt = await sort_button.inner_text()
+                    if "date" in txt.lower():
                         logger.info("Already sorted by Date")
                         sorted_by_date = True
                     else:
-                        logger.info("Opening sort dropdown via click...")
                         await sort_button.click()
-                        await asyncio.sleep(3)
+                        logger.info("Clicked sort button, waiting for dropdown...")
+                        await asyncio.sleep(2)
 
-                        # Try clicking the Date option after dropdown opens
-                        date_option_selectors = [
-                            'a[data-id="filter-sort-f"]',
-                            'ul[data-filter-id="sort"] li[title="Date"]',
-                            'ul[data-filter-id="sort"] a:has-text("Date")',
-                            '.filter-sort-options a:has-text("Date")',
-                            'li:has-text("Date") a',
-                            '[data-id*="sort"][data-id*="date" i]',
-                            'a:has-text("Date")',
-                        ]
-                        for sel in date_option_selectors:
-                            try:
-                                opt = await page.query_selector(sel)
-                                if opt:
-                                    await opt.click()
-                                    logger.info(f"Clicked Date sort option ({sel})")
-                                    await asyncio.sleep(10)
-                                    sorted_by_date = True
-                                    break
-                            except Exception:
-                                pass
-
-                # ── Strategy 2: JavaScript — open dropdown then click Date ──────────────────
+                # Step 2: click 'Date' option (via JS — works even when CSS selector misses)
                 if not sorted_by_date:
-                    logger.warning("Standard selectors failed. Trying JavaScript-based sort-by-date...")
-                    js_result = await page.evaluate("""
+                    clicked = await page.evaluate("""
                         () => {
-                            // Step 1: try to open the sort dropdown by clicking any sort button
-                            const sortTriggers = [
-                                document.querySelector('#filter-sort'),
-                                document.querySelector('[id*="sort"]'),
-                                document.querySelector('button[class*="sort"]'),
-                                document.querySelector('div[class*="sort"]'),
-                                document.querySelector('.sortby'),
-                                ...Array.from(document.querySelectorAll('button, span, div'))
-                                    .filter(el => el.textContent.trim().toLowerCase() === 'relevance'
-                                             || el.textContent.trim().toLowerCase() === 'sort by'),
-                            ].filter(Boolean);
-
-                            let opened = false;
-                            for (const trigger of sortTriggers) {
-                                try { trigger.click(); opened = true; break; } catch(e) {}
-                            }
-
-                            // Step 2: after opening, find and click the "Date" option
-                            // Try immediate click first (in case dropdown is already open)
-                            let el = document.querySelector('a[data-id="filter-sort-f"]');
-                            if (el) { el.click(); return 'data-id click (immediate)'; }
-
-                            // Try all anchors/buttons/li whose visible text is exactly "Date"
-                            const candidates = Array.from(document.querySelectorAll('a, li, button, span'));
-                            for (const c of candidates) {
-                                if (c.textContent.trim() === 'Date') {
-                                    c.click();
-                                    return 'text-match click (opened=' + opened + ')';
+                            // If dropdown not open yet, find and click the sort trigger
+                            // Look for element containing 'Sort by:' or whose leaf text is 'Relevance'
+                            const allEls = Array.from(document.querySelectorAll('*'));
+                            for (const el of allEls) {
+                                const t = el.textContent.trim();
+                                if ((t.startsWith('Sort by:') || t === 'Relevance') &&
+                                     el.children.length <= 2) {
+                                    el.click();
+                                    break;
                                 }
                             }
-                            return opened ? 'opened dropdown but Date option not found' : null;
+                            // Now click 'Date' option
+                            // 1. by data-id attribute
+                            let dateEl = document.querySelector('a[data-id="filter-sort-f"]');
+                            if (dateEl) { dateEl.click(); return 'data-id'; }
+                            // 2. by exact text content
+                            for (const el of Array.from(document.querySelectorAll('a, li, span, button'))) {
+                                if (el.textContent.trim() === 'Date') {
+                                    el.click();
+                                    return 'text-Date';
+                                }
+                            }
+                            return null;
                         }
                     """)
-                    if js_result:
-                        logger.info(f"JavaScript sort result: {js_result}")
-                        await asyncio.sleep(10)
-                        if 'not found' not in js_result:
-                            sorted_by_date = True
-                        else:
-                            # Dropdown opened but Date was not in the DOM yet — wait and retry once
-                            logger.info("Dropdown opened, retrying Date click after short wait...")
-                            await asyncio.sleep(3)
-                            js_retry = await page.evaluate("""
-                                () => {
-                                    let el = document.querySelector('a[data-id="filter-sort-f"]');
-                                    if (el) { el.click(); return 'retry data-id click'; }
-                                    const candidates = Array.from(document.querySelectorAll('a, li, button, span'));
-                                    for (const c of candidates) {
-                                        if (c.textContent.trim() === 'Date') { c.click(); return 'retry text click'; }
-                                    }
-                                    return null;
-                                }
-                            """)
-                            if js_retry:
-                                logger.info(f"Retry JS result: {js_retry}")
-                                await asyncio.sleep(10)
-                                sorted_by_date = True
+                    if clicked:
+                        logger.info(f"Clicked Date sort via JS ({clicked}), waiting for page to re-sort...")
+                        await asyncio.sleep(8)
+                        sorted_by_date = True
                     else:
-                        logger.warning("JavaScript sort failed — proceeding with current page order (no URL navigation)")
+                        logger.warning("Could not find Date sort option — continuing with current order")
 
-                logger.info(f"Sort by date applied: {sorted_by_date}")
+                logger.info(f"Sort by date: {sorted_by_date}")
 
             except Exception as e:
-                logger.error(f"Error while trying to sort by date: {str(e)}")
+                logger.error(f"Error sorting by date: {str(e)}")
                 logger.info("Continuing with default sorting")
             
             # Wait for the page to fully render JS (especially important on Linux headless)
