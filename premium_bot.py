@@ -26,6 +26,42 @@ STATE_KEYWORDS, STATE_EXPERIENCE, STATE_LOCATION, STATE_MENU = range(4)
 
 PREMIUM_USERS_FILE = "premium_users.json"
 PREMIUM_BOT_TOKEN = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
+ADMIN_TELEGRAM_ID = "7708376300"
+
+
+# ─────────────────────────────────────────────
+# Admin Notification Helper
+# ─────────────────────────────────────────────
+async def notify_admin_preference_update(bot, user, prefs, updated_field="Preferences Updated"):
+    """
+    Sends an instant alert to Admin (7708376300) whenever a user saves or updates preferences.
+    """
+    try:
+        keywords = prefs.get("job_keywords") or "Not set"
+        experience = prefs.get("experience") or "Not set"
+        location = prefs.get("location") or "Not set"
+        username_str = f"@{user.username}" if user.username else "No username"
+
+        admin_msg = (
+            "🔔 <b>NEW VIP PREFERENCE SUBMITTED</b>\n\n"
+            f"👤 <b>User:</b> {user.full_name} ({username_str})\n"
+            f"🆔 <b>User ID:</b> <code>{user.id}</code>\n"
+            f"⚡ <b>Action:</b> {updated_field}\n\n"
+            "📋 <b>Configured Profile:</b>\n"
+            f"🎯 <b>Keywords:</b> <code>{keywords}</code>\n"
+            f"⏳ <b>Experience:</b> <code>{experience} Yrs</code>\n"
+            f"📍 <b>Location:</b> <code>{location}</code>\n\n"
+            f"🕒 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        await bot.send_message(
+            chat_id=ADMIN_TELEGRAM_ID,
+            text=admin_msg,
+            parse_mode="HTML"
+        )
+        logger.info(f"Admin notified for user {user.id} ({updated_field})")
+    except Exception as e:
+        logger.warning(f"Could not notify admin {ADMIN_TELEGRAM_ID}: {e}")
+
 
 # ─────────────────────────────────────────────
 # Tech Stack Presets
@@ -262,6 +298,12 @@ async def handle_preset_selection(update: Update, context: ContextTypes.DEFAULT_
         users[user_id]["preferences"]["job_keywords"] = preset["keywords"]
         save_premium_users(users)
 
+        # Notify admin of new preference selection
+        await notify_admin_preference_update(
+            context.bot, user, users[user_id]["preferences"],
+            updated_field=f"Preset Applied ({preset['label']})"
+        )
+
         keyboard = [
             [InlineKeyboardButton("⏳ Next: Select Experience", callback_data="menu_edit_experience")],
             [InlineKeyboardButton("🏠 Back to Main Menu", callback_data="nav_main_menu")]
@@ -320,6 +362,12 @@ async def save_keywords_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     users[user_id]["preferences"]["job_keywords"] = keywords
     save_premium_users(users)
+
+    # Notify admin of updated keywords
+    await notify_admin_preference_update(
+        context.bot, user, users[user_id]["preferences"],
+        updated_field=f"Keywords Updated: {keywords}"
+    )
 
     keyboard = [
         [InlineKeyboardButton("⏳ Next: Select Experience", callback_data="menu_edit_experience")],
@@ -402,6 +450,12 @@ async def handle_exp_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     users[user_id]["preferences"]["experience"] = exp_val
     save_premium_users(users)
 
+    # Notify admin of updated experience
+    await notify_admin_preference_update(
+        context.bot, user, users[user_id]["preferences"],
+        updated_field=f"Experience Set: {exp_val} Yrs"
+    )
+
     keyboard = [
         [InlineKeyboardButton("📍 Next: Select Location", callback_data="menu_edit_location")],
         [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main_menu")]
@@ -427,6 +481,12 @@ async def save_experience_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     users[user_id]["preferences"]["experience"] = exp
     save_premium_users(users)
+
+    # Notify admin of updated experience
+    await notify_admin_preference_update(
+        context.bot, user, users[user_id]["preferences"],
+        updated_field=f"Experience Set: {exp} Yrs"
+    )
 
     keyboard = [
         [InlineKeyboardButton("📍 Next: Select Location", callback_data="menu_edit_location")],
@@ -525,6 +585,12 @@ async def handle_location_button(update: Update, context: ContextTypes.DEFAULT_T
     users[user_id]["preferences"]["location"] = loc_val
     save_premium_users(users)
 
+    # Notify admin of updated location
+    await notify_admin_preference_update(
+        context.bot, user, users[user_id]["preferences"],
+        updated_field=f"Location Set: {loc_val}"
+    )
+
     keyboard = [
         [InlineKeyboardButton("📋 View Complete Profile", callback_data="menu_view_card")],
         [InlineKeyboardButton("🏠 Return to Dashboard", callback_data="nav_main_menu")]
@@ -553,6 +619,12 @@ async def save_location_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     users[user_id]["preferences"]["location"] = loc
     save_premium_users(users)
 
+    # Notify admin of updated location
+    await notify_admin_preference_update(
+        context.bot, user, users[user_id]["preferences"],
+        updated_field=f"Location Set: {loc}"
+    )
+
     keyboard = [
         [InlineKeyboardButton("📋 View Complete Profile", callback_data="menu_view_card")],
         [InlineKeyboardButton("🏠 Return to Dashboard", callback_data="nav_main_menu")]
@@ -566,6 +638,7 @@ async def save_location_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode="HTML"
     )
     return STATE_MENU
+
 
 
 # ─────────────────────────────────────────────
