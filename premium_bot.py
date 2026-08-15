@@ -1,14 +1,14 @@
 """
 Premium Naukri Bot — python-telegram-bot v20 (async)
-Users register, set preferences (keywords, experience, location).
-main.py reads premium_users.json and sends matching jobs directly to each user.
+Advanced interactive UI with rich dashboard, 1-click tech stack presets,
+smart experience pickers, location selectors, and instant VIP notifications.
 """
 import os
 import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, ConversationHandler, CallbackQueryHandler,
@@ -22,36 +22,75 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states
-TITLE, EXPERIENCE, LOCATION, EDIT_PREFERENCES = range(4)
+STATE_KEYWORDS, STATE_EXPERIENCE, STATE_LOCATION, STATE_MENU = range(4)
 
 PREMIUM_USERS_FILE = "premium_users.json"
 PREMIUM_BOT_TOKEN = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
 
+# ─────────────────────────────────────────────
+# Tech Stack Presets
+# ─────────────────────────────────────────────
+PRESET_STACKS = {
+    "preset_devops": {
+        "label": "☁️ DevOps & Cloud",
+        "keywords": "DevOps, AWS, Kubernetes, Docker, Terraform, CI/CD, Linux"
+    },
+    "preset_python": {
+        "label": "🐍 Python & Backend",
+        "keywords": "Python, Django, FastAPI, Flask, PostgreSQL, REST API"
+    },
+    "preset_fullstack": {
+        "label": "⚛️ Full Stack (React / Node)",
+        "keywords": "React, Node.js, TypeScript, JavaScript, Next.js, MongoDB"
+    },
+    "preset_java": {
+        "label": "☕ Java & Spring Boot",
+        "keywords": "Java, Spring Boot, Microservices, Hibernate, REST API, SQL"
+    },
+    "preset_data": {
+        "label": "🤖 AI, ML & Data Science",
+        "keywords": "Python, Machine Learning, Data Science, AI, Deep Learning, SQL"
+    },
+    "preset_qa": {
+        "label": "🧪 QA & Automation",
+        "keywords": "Automation Testing, Selenium, QA, Python, Java, TestNG, API Testing"
+    },
+    "preset_dataeng": {
+        "label": "📊 Data Engineering",
+        "keywords": "Data Engineer, PySpark, Spark, SQL, ETL, AWS, Hadoop, Kafka"
+    },
+    "preset_security": {
+        "label": "🛡️ Cyber Security",
+        "keywords": "Cyber Security, SOC, Penetration Testing, SIEM, CISSP, Network Security"
+    }
+}
 
+# ─────────────────────────────────────────────
+# Helper Functions
+# ─────────────────────────────────────────────
 def load_premium_users():
     try:
-        with open(PREMIUM_USERS_FILE, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return {}
+        if os.path.exists(PREMIUM_USERS_FILE):
+            with open(PREMIUM_USERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading premium users: {e}")
+    return {}
 
 
 def save_premium_users(data):
-    with open(PREMIUM_USERS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    try:
+        with open(PREMIUM_USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving premium users: {e}")
 
 
-# ─────────────────────────────────────────────
-# /start
-# ─────────────────────────────────────────────
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
+def get_user_record(user):
     user_id = str(user.id)
-    username = user.username or user.first_name
-
+    username = user.username or user.first_name or "VIP Member"
     users = load_premium_users()
 
-    # New user
     if user_id not in users:
         expiry = datetime.now() + timedelta(days=36500)
         users[user_id] = {
@@ -65,211 +104,675 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             }
         }
         save_premium_users(users)
-        await update.message.reply_text(
-            f"👋 Welcome *{username}* to Premium Naukri Bot! 🎉\n\n"
-            f"Let's set up your job preferences so we can send you matching jobs.",
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text(
-            "🔍 Enter 1–5 job keywords separated by commas:\n"
-            "Example: `python, devops, aws, kubernetes`",
-            parse_mode="Markdown"
-        )
-        return TITLE
+    else:
+        # Keep username updated
+        if users[user_id].get("username") != username:
+            users[user_id]["username"] = username
+            save_premium_users(users)
 
-    # Existing user
-    prefs = users[user_id].get("preferences", {})
-    has_prefs = all([
-        prefs.get("job_keywords"),
-        prefs.get("experience"),
-        prefs.get("location")
-    ])
+    return users[user_id], users
 
-    if has_prefs:
-        keyboard = [
-            [InlineKeyboardButton("✏️ Edit Keywords", callback_data="edit_keywords")],
-            [InlineKeyboardButton("✏️ Edit Experience", callback_data="edit_experience")],
-            [InlineKeyboardButton("✏️ Edit Location", callback_data="edit_location")],
-            [InlineKeyboardButton("👍 Keep Current", callback_data="keep_preferences")],
+
+def build_dashboard_text(user, user_data):
+    prefs = user_data.get("preferences", {})
+    keywords = prefs.get("job_keywords", "").strip() or "⚠️ <i>Not configured</i>"
+    experience = prefs.get("experience", "").strip()
+    exp_display = f"<b>{experience} Yrs</b>" if experience else "⚠️ <i>Not configured</i>"
+    location = prefs.get("location", "").strip() or "⚠️ <i>Not configured</i>"
+
+    is_complete = bool(prefs.get("job_keywords") and prefs.get("experience") and prefs.get("location"))
+    status_badge = "🟢 <b>ACTIVE (Matching 24/7)</b>" if is_complete else "🟡 <b>SETUP INCOMPLETE</b>"
+
+    dashboard = (
+        "╔══════════════════════════╗\n"
+        "║  💎 <b>PREMIUM NAUKRI VIP BOT</b>  ║\n"
+        "╚══════════════════════════╝\n\n"
+        f"👋 Welcome, <b>{user.first_name}</b>!\n"
+        f"⭐ <b>Status:</b> {status_badge}\n"
+        f"🆔 <b>Member ID:</b> <code>{user.id}</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📋 <b>YOUR TARGET PREFERENCES:</b>\n"
+        f"🎯 <b>Keywords:</b> <code>{keywords}</code>\n"
+        f"⏳ <b>Experience:</b> {exp_display}\n"
+        f"📍 <b>Locations:</b> <code>{location}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+    if not is_complete:
+        dashboard += (
+            "💡 <i>Complete your profile below to get real-time private alerts</i>\n"
+            "<i>whenever a matching job is posted on Naukri.com!</i>"
+        )
+    else:
+        dashboard += (
+            "🚀 <b>Auto-Filter Active!</b> You will receive instant notifications\n"
+            "as soon as freshly posted jobs match your profile."
+        )
+
+    return dashboard
+
+
+def build_main_menu_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("⚡ Quick 1-Click Tech Stacks", callback_data="menu_presets"),
+        ],
+        [
+            InlineKeyboardButton("🎯 Edit Keywords", callback_data="menu_edit_keywords"),
+            InlineKeyboardButton("⏳ Edit Experience", callback_data="menu_edit_experience"),
+        ],
+        [
+            InlineKeyboardButton("📍 Edit Location", callback_data="menu_edit_location"),
+            InlineKeyboardButton("📋 View Card", callback_data="menu_view_card"),
+        ],
+        [
+            InlineKeyboardButton("🧪 Test Match Preview", callback_data="menu_test_match"),
+            InlineKeyboardButton("❓ Help & Guide", callback_data="menu_help"),
         ]
-        await update.message.reply_text(
-            f"👋 Welcome back *{username}*!\n\n"
-            f"Your current preferences:\n"
-            f"🔍 Keywords: `{prefs.get('job_keywords', 'Not set')}`\n"
-            f"⏳ Experience: `{prefs.get('experience', 'Not set')}` yrs\n"
-            f"📍 Location: `{prefs.get('location', 'Not set')}`\n\n"
-            f"Want to update them?",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-        return EDIT_PREFERENCES
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ─────────────────────────────────────────────
+# /start & /menu handlers
+# ─────────────────────────────────────────────
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    user_data, _ = get_user_record(user)
+
+    dashboard_text = build_dashboard_text(user, user_data)
+    reply_markup = build_main_menu_keyboard()
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(
+                dashboard_text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+        except Exception:
+            await update.callback_query.message.reply_text(
+                dashboard_text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
     else:
         await update.message.reply_text(
-            "🔍 Enter 1–5 job keywords separated by commas:\n"
-            "Example: `python, devops, aws, kubernetes`",
-            parse_mode="Markdown"
+            dashboard_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+            disable_web_page_preview=True
         )
-        return TITLE
+
+    return STATE_MENU
 
 
 # ─────────────────────────────────────────────
-# Collect keywords
+# Tech Stack Presets Menu
 # ─────────────────────────────────────────────
-async def job_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = str(update.effective_user.id)
+async def show_presets_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = []
+    # Two presets per row
+    preset_keys = list(PRESET_STACKS.keys())
+    for i in range(0, len(preset_keys), 2):
+        row = [InlineKeyboardButton(PRESET_STACKS[preset_keys[i]]["label"], callback_data=preset_keys[i])]
+        if i + 1 < len(preset_keys):
+            row.append(InlineKeyboardButton(PRESET_STACKS[preset_keys[i+1]]["label"], callback_data=preset_keys[i+1]))
+        keyboard.append(row)
+
+    keyboard.append([InlineKeyboardButton("✍️ Custom Keyword Input", callback_data="menu_edit_keywords")])
+    keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")])
+
+    text = (
+        "⚡ <b>POPULAR TECH STACK PRESETS</b>\n\n"
+        "Select your domain to automatically apply curated high-frequency Naukri keywords:\n"
+    )
+    for p in PRESET_STACKS.values():
+        text += f"• <b>{p['label']}:</b> <code>{p['keywords']}</code>\n"
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return STATE_MENU
+
+
+async def handle_preset_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    preset_key = query.data
+
+    if preset_key in PRESET_STACKS:
+        preset = PRESET_STACKS[preset_key]
+        user = update.effective_user
+        user_id = str(user.id)
+
+        users = load_premium_users()
+        if user_id not in users:
+            get_user_record(user)
+            users = load_premium_users()
+
+        users[user_id]["preferences"]["job_keywords"] = preset["keywords"]
+        save_premium_users(users)
+
+        keyboard = [
+            [InlineKeyboardButton("⏳ Next: Select Experience", callback_data="menu_edit_experience")],
+            [InlineKeyboardButton("🏠 Back to Main Menu", callback_data="nav_main_menu")]
+        ]
+        await query.edit_message_text(
+            f"✅ <b>Applied Preset: {preset['label']}</b>\n\n"
+            f"🎯 <b>Saved Keywords:</b>\n<code>{preset['keywords']}</code>\n\n"
+            "👉 Next, let's configure your experience level.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    return STATE_MENU
+
+
+# ─────────────────────────────────────────────
+# Keyword Setup Handlers
+# ─────────────────────────────────────────────
+async def prompt_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+        keyboard = [
+            [InlineKeyboardButton("⚡ Use 1-Click Presets", callback_data="menu_presets")],
+            [InlineKeyboardButton("🔙 Cancel / Back", callback_data="nav_main_menu")]
+        ]
+        await query.edit_message_text(
+            "🎯 <b>CONFIGURE JOB KEYWORDS</b>\n\n"
+            "Send your target job titles or skills separated by commas.\n\n"
+            "📌 <i>Examples:</i>\n"
+            "• <code>DevOps, AWS, Kubernetes, Terraform</code>\n"
+            "• <code>Python, Django, FastAPI, Backend</code>\n"
+            "• <code>React, Node.js, TypeScript, Frontend</code>\n"
+            "• <code>Java, Spring Boot, Microservices</code>\n\n"
+            "✍️ <i>Type your keywords in the chat now:</i>",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text(
+            "🎯 <b>Enter your keywords separated by commas:</b>\n"
+            "Example: <code>python, devops, aws</code>",
+            parse_mode="HTML"
+        )
+    return STATE_KEYWORDS
+
+
+async def save_keywords_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    user_id = str(user.id)
     keywords = update.message.text.strip()
 
     users = load_premium_users()
-    if user_id in users:
-        users[user_id]["preferences"]["job_keywords"] = keywords
-        save_premium_users(users)
+    if user_id not in users:
+        get_user_record(user)
+        users = load_premium_users()
 
-    await update.message.reply_text(f"✅ Keywords saved: `{keywords}`\n\n📊 Now enter your total experience in years (e.g. `4`):", parse_mode="Markdown")
-    return EXPERIENCE
+    users[user_id]["preferences"]["job_keywords"] = keywords
+    save_premium_users(users)
+
+    keyboard = [
+        [InlineKeyboardButton("⏳ Next: Select Experience", callback_data="menu_edit_experience")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main_menu")]
+    ]
+    await update.message.reply_text(
+        f"✅ <b>Keywords Saved!</b>\n\n"
+        f"🎯 <b>Keywords:</b> <code>{keywords}</code>\n\n"
+        "👉 Now set your experience level to filter jobs accurately.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return STATE_MENU
 
 
 # ─────────────────────────────────────────────
-# Collect experience
+# Experience Setup Handlers
 # ─────────────────────────────────────────────
-async def experience_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = str(update.effective_user.id)
+async def prompt_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🎓 0-1 Yr (Fresher)", callback_data="exp_0"),
+            InlineKeyboardButton("🔹 1-3 Yrs (Junior)", callback_data="exp_2"),
+        ],
+        [
+            InlineKeyboardButton("🔸 3-5 Yrs (Mid)", callback_data="exp_4"),
+            InlineKeyboardButton("💼 5-8 Yrs (Senior)", callback_data="exp_6"),
+        ],
+        [
+            InlineKeyboardButton("🏆 8+ Yrs (Lead)", callback_data="exp_9"),
+            InlineKeyboardButton("✍️ Custom Number", callback_data="exp_custom"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")
+        ]
+    ]
+
+    text = (
+        "⏳ <b>SELECT YOUR EXPERIENCE LEVEL</b>\n\n"
+        "Choose your total years of work experience or click 'Custom Number' to type:"
+    )
+
+    if query:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+    return STATE_MENU
+
+
+async def handle_exp_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "exp_custom":
+        keyboard = [[InlineKeyboardButton("🔙 Cancel", callback_data="nav_main_menu")]]
+        await query.edit_message_text(
+            "⏳ <b>Enter your years of experience as a number:</b>\n\n"
+            "Examples: <code>3</code> or <code>5.5</code> or <code>8</code>\n\n"
+            "✍️ <i>Type the number in chat now:</i>",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+        return STATE_EXPERIENCE
+
+    exp_val = data.replace("exp_", "")
+    user = update.effective_user
+    user_id = str(user.id)
+
+    users = load_premium_users()
+    if user_id not in users:
+        get_user_record(user)
+        users = load_premium_users()
+
+    users[user_id]["preferences"]["experience"] = exp_val
+    save_premium_users(users)
+
+    keyboard = [
+        [InlineKeyboardButton("📍 Next: Select Location", callback_data="menu_edit_location")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main_menu")]
+    ]
+    await query.edit_message_text(
+        f"✅ <b>Experience Saved:</b> <b>{exp_val} Years</b>\n\n"
+        "👉 Next, let's select your preferred job locations.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return STATE_MENU
+
+
+async def save_experience_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    user_id = str(user.id)
     exp = update.message.text.strip()
 
     users = load_premium_users()
-    if user_id in users:
-        users[user_id]["preferences"]["experience"] = exp
-        save_premium_users(users)
+    if user_id not in users:
+        get_user_record(user)
+        users = load_premium_users()
 
-    await update.message.reply_text(f"✅ Experience saved: `{exp}` yrs\n\n📍 Enter your preferred job location (e.g. `Mumbai, Pune`):", parse_mode="Markdown")
-    return LOCATION
+    users[user_id]["preferences"]["experience"] = exp
+    save_premium_users(users)
+
+    keyboard = [
+        [InlineKeyboardButton("📍 Next: Select Location", callback_data="menu_edit_location")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main_menu")]
+    ]
+    await update.message.reply_text(
+        f"✅ <b>Experience Saved:</b> <b>{exp} Years</b>\n\n"
+        "👉 Next, set your preferred job locations.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return STATE_MENU
 
 
 # ─────────────────────────────────────────────
-# Collect location
+# Location Setup Handlers
 # ─────────────────────────────────────────────
-async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = str(update.effective_user.id)
+async def prompt_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🌐 Remote / Pan India", callback_data="loc_remote"),
+            InlineKeyboardButton("🏙️ Bengaluru", callback_data="loc_bengaluru"),
+        ],
+        [
+            InlineKeyboardButton("🏙️ Hyderabad", callback_data="loc_hyderabad"),
+            InlineKeyboardButton("🏙️ Pune", callback_data="loc_pune"),
+        ],
+        [
+            InlineKeyboardButton("🏙️ Mumbai", callback_data="loc_mumbai"),
+            InlineKeyboardButton("🏙️ Delhi NCR / Gurgaon", callback_data="loc_delhi"),
+        ],
+        [
+            InlineKeyboardButton("🏙️ Chennai", callback_data="loc_chennai"),
+            InlineKeyboardButton("✍️ Custom City List", callback_data="loc_custom"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")
+        ]
+    ]
+
+    text = (
+        "📍 <b>SELECT PREFERRED JOB LOCATION</b>\n\n"
+        "Choose a major tech hub or click 'Custom City List' to enter multiple locations:"
+    )
+
+    if query:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+    return STATE_MENU
+
+
+async def handle_location_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "loc_custom":
+        keyboard = [[InlineKeyboardButton("🔙 Cancel", callback_data="nav_main_menu")]]
+        await query.edit_message_text(
+            "📍 <b>Enter your preferred cities (comma-separated):</b>\n\n"
+            "Examples:\n"
+            "• <code>Bengaluru, Hyderabad, Remote</code>\n"
+            "• <code>Pune, Mumbai</code>\n"
+            "• <code>Noida, Gurgaon, Delhi</code>\n\n"
+            "✍️ <i>Type your cities in chat now:</i>",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+        return STATE_LOCATION
+
+    loc_map = {
+        "loc_remote": "Remote, Any",
+        "loc_bengaluru": "Bengaluru, Bangalore",
+        "loc_hyderabad": "Hyderabad",
+        "loc_pune": "Pune",
+        "loc_mumbai": "Mumbai",
+        "loc_delhi": "Delhi, NCR, Gurgaon, Noida",
+        "loc_chennai": "Chennai"
+    }
+    loc_val = loc_map.get(data, "Remote")
+
+    user = update.effective_user
+    user_id = str(user.id)
+
+    users = load_premium_users()
+    if user_id not in users:
+        get_user_record(user)
+        users = load_premium_users()
+
+    users[user_id]["preferences"]["location"] = loc_val
+    save_premium_users(users)
+
+    keyboard = [
+        [InlineKeyboardButton("📋 View Complete Profile", callback_data="menu_view_card")],
+        [InlineKeyboardButton("🏠 Return to Dashboard", callback_data="nav_main_menu")]
+    ]
+    await query.edit_message_text(
+        f"🎉 <b>PREFERENCES FULLY CONFIGURED!</b>\n\n"
+        f"📍 <b>Location:</b> <code>{loc_val}</code>\n\n"
+        "🟢 <b>VIP Alert Engine is ACTIVE.</b> You will now receive matching jobs "
+        "directly in this chat the moment they appear on Naukri.com!",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return STATE_MENU
+
+
+async def save_location_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    user_id = str(user.id)
     loc = update.message.text.strip()
 
     users = load_premium_users()
-    if user_id in users:
-        users[user_id]["preferences"]["location"] = loc
-        save_premium_users(users)
-
-    prefs = users[user_id]["preferences"]
-    await update.message.reply_text(
-        f"🎉 *Preferences saved!*\n\n"
-        f"🔍 Keywords: `{prefs['job_keywords']}`\n"
-        f"⏳ Experience: `{prefs['experience']}` yrs\n"
-        f"📍 Location: `{prefs['location']}`\n\n"
-        f"You will now receive matching job alerts directly here! ✅",
-        parse_mode="Markdown"
-    )
-    return ConversationHandler.END
-
-
-# ─────────────────────────────────────────────
-# Edit preference callbacks
-# ─────────────────────────────────────────────
-async def edit_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "🔍 Enter new keywords (comma-separated):\nExample: `python, devops, aws`",
-        parse_mode="Markdown"
-    )
-    return TITLE
-
-
-async def edit_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⏳ Enter your years of experience (e.g. `4`):",
-        parse_mode="Markdown"
-    )
-    return EXPERIENCE
-
-
-async def edit_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "📍 Enter your preferred location (e.g. `Mumbai, Pune`):",
-        parse_mode="Markdown"
-    )
-    return LOCATION
-
-
-async def keep_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
-    user_id = str(update.callback_query.from_user.id)
-    users = load_premium_users()
-    prefs = users[user_id]["preferences"]
-    await update.callback_query.edit_message_text(
-        f"👍 Preferences unchanged:\n\n"
-        f"🔍 Keywords: `{prefs.get('job_keywords', 'Not set')}`\n"
-        f"⏳ Experience: `{prefs.get('experience', 'Not set')}` yrs\n"
-        f"📍 Location: `{prefs.get('location', 'Not set')}`",
-        parse_mode="Markdown"
-    )
-    return ConversationHandler.END
-
-
-# ─────────────────────────────────────────────
-# /cancel
-# ─────────────────────────────────────────────
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Setup cancelled. Use /start to begin again.")
-    return ConversationHandler.END
-
-
-# ─────────────────────────────────────────────
-# /mypreferences
-# ─────────────────────────────────────────────
-async def my_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    users = load_premium_users()
     if user_id not in users:
-        await update.message.reply_text("You are not registered. Use /start to set up.")
-        return
-    prefs = users[user_id].get("preferences", {})
+        get_user_record(user)
+        users = load_premium_users()
+
+    users[user_id]["preferences"]["location"] = loc
+    save_premium_users(users)
+
+    keyboard = [
+        [InlineKeyboardButton("📋 View Complete Profile", callback_data="menu_view_card")],
+        [InlineKeyboardButton("🏠 Return to Dashboard", callback_data="nav_main_menu")]
+    ]
     await update.message.reply_text(
-        f"📋 *Your current preferences:*\n\n"
-        f"🔍 Keywords: `{prefs.get('job_keywords', 'Not set')}`\n"
-        f"⏳ Experience: `{prefs.get('experience', 'Not set')}` yrs\n"
-        f"📍 Location: `{prefs.get('location', 'Not set')}`",
-        parse_mode="Markdown"
+        f"🎉 <b>PREFERENCES FULLY CONFIGURED!</b>\n\n"
+        f"📍 <b>Location:</b> <code>{loc}</code>\n\n"
+        "🟢 <b>VIP Alert Engine is ACTIVE.</b> You will now receive matching jobs "
+        "directly in this chat the moment they appear on Naukri.com!",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
     )
+    return STATE_MENU
 
 
 # ─────────────────────────────────────────────
-# Main
+# Profile Card & Test Preview
+# ─────────────────────────────────────────────
+async def view_profile_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+
+    user = update.effective_user
+    user_data, _ = get_user_record(user)
+    prefs = user_data.get("preferences", {})
+
+    keywords = prefs.get("job_keywords") or "Not set"
+    experience = prefs.get("experience") or "Not set"
+    location = prefs.get("location") or "Not set"
+    is_active = bool(prefs.get("job_keywords") and prefs.get("experience") and prefs.get("location"))
+
+    card = (
+        "┌───────────────────────────────┐\n"
+        "│  💎 <b>VIP MEMBER PROFILE CARD</b>        │\n"
+        "├───────────────────────────────┤\n"
+        f"│ 👤 <b>Name:</b> {user.full_name}\n"
+        f"│ 🆔 <b>Telegram ID:</b> <code>{user.id}</code>\n"
+        f"│ ⭐ <b>Tier:</b> Lifetime VIP Member\n"
+        f"│ 🔔 <b>Direct Alerts:</b> {'🟢 ENABLED' if is_active else '🔴 INCOMPLETE'}\n"
+        "├───────────────────────────────┤\n"
+        f"│ 🎯 <b>Target Keywords:</b>\n│  <code>{keywords}</code>\n"
+        "│\n"
+        f"│ ⏳ <b>Experience Filter:</b>\n│  <b>{experience} Years</b>\n"
+        "│\n"
+        f"│ 📍 <b>Target Location:</b>\n│  <code>{location}</code>\n"
+        "└───────────────────────────────┘\n"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("✏️ Modify Preferences", callback_data="menu_presets")],
+        [InlineKeyboardButton("🏠 Back to Dashboard", callback_data="nav_main_menu")]
+    ]
+
+    if query:
+        await query.edit_message_text(card, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    else:
+        await update.message.reply_text(card, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+    return STATE_MENU
+
+
+async def test_match_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    user = update.effective_user
+    user_data, _ = get_user_record(user)
+    prefs = user_data.get("preferences", {})
+
+    keywords = prefs.get("job_keywords") or "DevOps, Python"
+    exp = prefs.get("experience") or "3"
+    loc = prefs.get("location") or "Bengaluru"
+
+    sample_job = (
+        "🧪 <b>SAMPLE NOTIFICATION PREVIEW</b>\n\n"
+        "<i>Here is how a matched job will appear in your private chat:</i>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 <b>Senior {keywords.split(',')[0].strip()} Specialist</b>\n\n"
+        "🏢 <b>Company:</b> Global Tech Solutions\n\n"
+        f"⏳ <b>Experience:</b> {exp}-8 Yrs\n\n"
+        f"📍 <b>Location:</b> {loc.split(',')[0].strip()}\n\n"
+        "💰 <b>CTC:</b> ₹ 18 - 30 Lacs P.A.\n\n"
+        f"#{(keywords.split(',')[0].strip()).replace(' ', '')} #NaukriAlert #VIPMatch\n\n"
+        "🔗 <b>Apply Link:</b> https://www.naukri.com/job-listings-sample\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚡ <i>Matches are delivered in under 60 seconds of posting on Naukri.com!</i>"
+    )
+
+    keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="nav_main_menu")]]
+    await query.edit_message_text(sample_job, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    return STATE_MENU
+
+
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if query:
+        await query.answer()
+
+    help_text = (
+        "ℹ️ <b>HOW THE VIP NAUKRI BOT WORKS</b>\n\n"
+        "1️⃣ <b>Live Scraper:</b> Our cloud scraper scans Naukri.com 24/7 for newly published IT jobs.\n"
+        "2️⃣ <b>Smart Filter:</b> Every single job is parsed for title, skill hashtags, required experience, and location.\n"
+        "3️⃣ <b>Instant Direct Delivery:</b> If a job matches your keywords, experience range, and city, it is sent to this private chat instantly!\n\n"
+        "💡 <b>Tips for Best Matches:</b>\n"
+        "• Add 3–6 relevant skill keywords (e.g. <code>aws, kubernetes, python, devops</code>)\n"
+        "• Set your exact total experience\n"
+        "• Include <code>Remote</code> if you are open to work-from-home\n\n"
+        "<b>Commands:</b>\n"
+        "• /start or /menu — Open interactive dashboard\n"
+        "• /profile — View your current filters\n"
+        "• /help — Show this guide\n"
+        "• /cancel — Reset current prompt"
+    )
+
+    keyboard = [[InlineKeyboardButton("🏠 Back to Dashboard", callback_data="nav_main_menu")]]
+
+    if query:
+        await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    else:
+        await update.message.reply_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+    return STATE_MENU
+
+
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    keyboard = [[InlineKeyboardButton("🏠 Open Dashboard", callback_data="nav_main_menu")]]
+    await update.message.reply_text(
+        "👋 Action cancelled. You can return to the dashboard anytime with /start or /menu.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return STATE_MENU
+
+
+# ─────────────────────────────────────────────
+# Post-Init: Register Telegram Commands Menu
+# ─────────────────────────────────────────────
+async def post_init(application: Application):
+    try:
+        commands = [
+            BotCommand("start", "Launch VIP Dashboard"),
+            BotCommand("menu", "Main interactive menu"),
+            BotCommand("profile", "View profile & filters"),
+            BotCommand("help", "How matching works"),
+            BotCommand("cancel", "Cancel current action"),
+        ]
+        await application.bot.set_my_commands(commands)
+        logger.info("Bot commands menu registered with Telegram successfully")
+    except Exception as e:
+        logger.warning(f"Could not register bot commands: {e}")
+
+
+# ─────────────────────────────────────────────
+# Main Runner
 # ─────────────────────────────────────────────
 def run_premium_bot(token=None):
     token = token or PREMIUM_BOT_TOKEN
 
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(post_init).build()
 
     conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            CommandHandler("menu", start),
+            CommandHandler("profile", view_profile_card),
+            CommandHandler("mypreferences", view_profile_card),
+            CommandHandler("help", show_help),
+            CallbackQueryHandler(start, pattern="^nav_main_menu$"),
+        ],
         states={
-            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, job_title)],
-            EXPERIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, experience_handler)],
-            LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, location_handler)],
-            EDIT_PREFERENCES: [
-                CallbackQueryHandler(edit_keywords,    pattern="^edit_keywords$"),
-                CallbackQueryHandler(edit_experience,  pattern="^edit_experience$"),
-                CallbackQueryHandler(edit_location,    pattern="^edit_location$"),
-                CallbackQueryHandler(keep_preferences, pattern="^keep_preferences$"),
+            STATE_MENU: [
+                CallbackQueryHandler(show_presets_menu,      pattern="^menu_presets$"),
+                CallbackQueryHandler(prompt_keywords,        pattern="^menu_edit_keywords$"),
+                CallbackQueryHandler(prompt_experience,      pattern="^menu_edit_experience$"),
+                CallbackQueryHandler(prompt_location,        pattern="^menu_edit_location$"),
+                CallbackQueryHandler(view_profile_card,      pattern="^menu_view_card$"),
+                CallbackQueryHandler(test_match_preview,     pattern="^menu_test_match$"),
+                CallbackQueryHandler(show_help,              pattern="^menu_help$"),
+                CallbackQueryHandler(start,                  pattern="^nav_main_menu$"),
+                CallbackQueryHandler(handle_preset_selection,pattern="^preset_"),
+                CallbackQueryHandler(handle_exp_button,      pattern="^exp_"),
+                CallbackQueryHandler(handle_location_button, pattern="^loc_"),
+            ],
+            STATE_KEYWORDS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, save_keywords_text),
+                CallbackQueryHandler(show_presets_menu, pattern="^menu_presets$"),
+                CallbackQueryHandler(start, pattern="^nav_main_menu$"),
+            ],
+            STATE_EXPERIENCE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, save_experience_text),
+                CallbackQueryHandler(handle_exp_button, pattern="^exp_"),
+                CallbackQueryHandler(start, pattern="^nav_main_menu$"),
+            ],
+            STATE_LOCATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, save_location_text),
+                CallbackQueryHandler(handle_location_button, pattern="^loc_"),
+                CallbackQueryHandler(start, pattern="^nav_main_menu$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel_handler),
+            CommandHandler("start", start),
+            CommandHandler("menu", start),
+            CommandHandler("profile", view_profile_card),
+            CommandHandler("help", show_help),
+        ],
+        allow_reentry=True,
+        per_message=False,
     )
 
     app.add_handler(conv)
-    app.add_handler(CommandHandler("mypreferences", my_preferences))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", start))
+    app.add_handler(CommandHandler("profile", view_profile_card))
+    app.add_handler(CommandHandler("mypreferences", view_profile_card))
+    app.add_handler(CommandHandler("help", show_help))
 
-    logger.info("Starting Premium Naukri Bot (v20 async)...")
+    logger.info("Starting Advanced Premium Naukri Bot (v20 async)...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None, close_loop=False)
 
 
 if __name__ == "__main__":
-    run_premium_bot()
+    run_premium_bot()
