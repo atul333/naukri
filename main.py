@@ -109,17 +109,19 @@ class NaukriJobScraper:
                     "toolkit.telemetry.enabled":                         False,
                     "browser.startup.homepage":                          "about:blank",
 
-                    # ── Critical RAM & CPU Optimizations (Prevents 10+ child processes) ──
-                    "dom.ipc.processCount":                              1,      # Single content process! (Prevents multi-process RAM explosion)
-                    "dom.ipc.processCount.web":                          1,      # 1 web worker
-                    "browser.cache.memory.enable":                       False,  # Don't cache web assets in RAM
-                    "browser.sessionhistory.max_entries":                1,      # Minimal history retention
-                    "browser.sessionhistory.max_total_viewers":          0,      # Don't retain cached page viewers in memory
-                    "image.animation_mode":                              "none", # Disable GIF / CSS animations
-                    "media.peerconnection.enabled":                      False,  # Disable WebRTC background workers
-                    "media.navigator.enabled":                           False,  # Disable camera/mic workers
-                    "media.autoplay.default":                            5,      # Block all media autoplay
-                    "layers.acceleration.disabled":                      True,   # Disable GPU hardware acceleration attempts
+                    # ── Critical RAM & CPU Optimizations (Prevents multiple child processes) ──
+                    "browser.tabs.remote.autostart":                     False,  # Completely disable multi-process (e10s) mode!
+                    "dom.ipc.processCount":                              1,      # Single process
+                    "dom.ipc.processCount.web":                          1,
+                    "browser.cache.disk.enable":                         False,  # Disable disk caching
+                    "browser.cache.memory.enable":                       False,  # Disable memory caching
+                    "browser.sessionhistory.max_entries":                1,
+                    "browser.sessionhistory.max_total_viewers":          0,
+                    "image.animation_mode":                              "none",
+                    "media.peerconnection.enabled":                      False,
+                    "media.navigator.enabled":                           False,
+                    "media.autoplay.default":                            5,
+                    "layers.acceleration.disabled":                      True,
                 }
             )
             logger.info("Firefox launched successfully (single-process mode)")

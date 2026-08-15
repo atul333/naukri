@@ -1163,10 +1163,58 @@ async def extract_and_post_first_job():
         logger.error(f"❌ Test failed: {str(e)}")
         raise
 
+async def main_scheduler():
+    telegram_token = TELEGRAM_TOKEN
+    channel_id = "@IT_Job_openings_Naukri"
+    
+    # 1. Run immediate scrape and advertisement on startup
+    logger.info("Running initial job scraper on startup...")
+    try:
+        await extract_and_post_first_job()
+        gc.collect()
+    except Exception as e:
+        logger.error(f"Startup job scraper failed: {e}")
+        cleanup_zombies()
+
+    logger.info("Posting initial advertisement on startup...")
+    try:
+        send_advertisement_to_channel(telegram_token, channel_id)
+    except Exception as e:
+        logger.error(f"Startup advertisement failed: {e}")
+
+    last_ad_time = time.time()
+    
+    logger.info("Starting automated continuous scraper cycle (every 60s)...")
+    while True:
+        try:
+            # Idle sleep - CPU is strictly 0.0% during sleep
+            await asyncio.sleep(60)
+
+            # Check if 60 minutes have passed for advertisement
+            if time.time() - last_ad_time >= 3600:
+                try:
+                    logger.info("Posting scheduled advertisement to channel...")
+                    send_advertisement_to_channel(telegram_token, channel_id)
+                    last_ad_time = time.time()
+                except Exception as e:
+                    logger.error(f"Advertisement posting failed: {e}")
+
+            # Run scheduled job scraper
+            logger.info("Running scheduled job scraper...")
+            await extract_and_post_first_job()
+            logger.info("Scheduled scrape cycle complete")
+            gc.collect()
+        except asyncio.CancelledError:
+            logger.info("Scraper scheduler stopped")
+            break
+        except Exception as e:
+            logger.error(f"Scraper loop exception: {e}")
+            cleanup_zombies()
+            await asyncio.sleep(10)
+
+
 # Run the script with scheduling
 if __name__ == "__main__":
-    import schedule
-    import time
     import gc
     import subprocess
 
@@ -1181,37 +1229,8 @@ if __name__ == "__main__":
 
     # Clean up old zombie browser processes before starting
     cleanup_zombies()
-    
-    # Use the token defined at the top of the file
-    telegram_token = TELEGRAM_TOKEN
-    channel_id = "@IT_Job_openings_Naukri"
-    
-    def run_job():
-        """Run the job scraper"""
-        try:
-            logger.info("Running scheduled job scraper...")
-            asyncio.run(extract_and_post_first_job())
-            logger.info("Scheduled job completed successfully")
-            gc.collect()
-        except Exception as e:
-            logger.error(f"Scheduled job failed: {str(e)}")
-            cleanup_zombies()
-    
-    def post_advertisement():
-        """Post advertisement to channel"""
-        try:
-            logger.info("Posting scheduled advertisement to channel...")
-            result = send_advertisement_to_channel(telegram_token, channel_id)
-            if result:
-                logger.info("✅ Advertisement posted successfully")
-            else:
-                logger.error("❌ Failed to post advertisement")
-        except Exception as e:
-            logger.error(f"Advertisement posting failed: {str(e)}")
-    
+
     # Start premium bot in a background thread so it does not block the job scraper
-    # We create a brand-new event loop for the thread because asyncio loops are
-    # thread-local and run_polling() requires one.
     logger.info("Starting premium bot in background thread...")
     try:
         import asyncio as _asyncio
@@ -1231,29 +1250,12 @@ if __name__ == "__main__":
         logger.info("Premium bot started in background thread")
     except Exception as e:
         logger.warning(f"Failed to start premium bot thread: {e}. Continuing with scraper.")
-    
-    # Run immediately on startup
-    logger.info("Running job scraper immediately on startup")
-    run_job()
-    
-    # Post advertisement immediately
-    logger.info("Posting advertisement immediately on startup")
-    post_advertisement()
-    
-    # Schedule job scraper to run every 60 seconds
-    logger.info("Setting up schedule to run job scraper every 60 seconds")
-    schedule.every(60).seconds.do(run_job)
-    
-    # Schedule advertisement to run every 1 minute
-    logger.info("Setting up schedule to post advertisement every 60 minute")
-    schedule.every(60).minutes.do(post_advertisement)
-    
+
     try:
-        # Keep the script running and check for scheduled jobs
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
+        asyncio.run(main_scheduler())
     except KeyboardInterrupt:
         logger.info("Scheduler stopped by user")
+        cleanup_zombies()
     except Exception as e:
         logger.error(f"Scheduler crashed: {str(e)}")
+        cleanup_zombies()
