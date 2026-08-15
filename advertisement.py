@@ -65,16 +65,24 @@ def send_advertisement_to_channel(telegram_token, channel_id):
         ad_messages = [get_advertisement_message(), get_alternative_ad_message()]
         ad_message = random.choice(ad_messages)
         
-        # Create a bot instance
-        bot = Bot(token=telegram_token)
-        
-        # Send the advertisement to the channel - synchronous version
-        bot.send_message(
-            chat_id=channel_id,
-            text=ad_message,
-            parse_mode='HTML',
-            disable_web_page_preview=True
-        )
+        async def _send():
+            bot = Bot(token=telegram_token)
+            await bot.send_message(
+                chat_id=channel_id,
+                text=ad_message,
+                parse_mode='HTML',
+                disable_web_page_preview=True
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            asyncio.create_task(_send())
+        else:
+            asyncio.run(_send())
         
         logger.info(f"Advertisement sent to channel {channel_id}")
         return True

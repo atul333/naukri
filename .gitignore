@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+*.png
+*.jpg
+*.jpeg
+*.html
+*.bat
+playwright_tmp/
+pw-browsers/
+.DS_Store

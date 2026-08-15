@@ -268,8 +268,8 @@ def run_premium_bot(token=None):
     app.add_handler(CommandHandler("mypreferences", my_preferences))
 
     logger.info("Starting Premium Naukri Bot (v20 async)...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None, close_loop=False)
 
 
 if __name__ == "__main__":
-    run_premium_bot()
+    run_premium_bot()
