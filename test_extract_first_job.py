@@ -327,17 +327,15 @@ async def extract_and_post_first_job():
                 'Upgrade-Insecure-Requests': '1'
             })
             
-            # Use networkidle so the browser waits for React to finish all API calls
-            # before we try to interact. domcontentloaded/load fires too early for SPAs.
-            logger.info("Navigating and waiting for network to be idle (React data loaded)...")
+            # Fast DOM load (2-3 seconds instead of spinning 90s on networkidle)
+            logger.info("Navigating to page (fast DOM load)...")
             try:
-                await page.goto(job_url, wait_until='networkidle', timeout=90000)
-                logger.info("Network idle — page fully loaded")
+                await page.goto(job_url, wait_until='domcontentloaded', timeout=30000)
+                logger.info("DOM content loaded")
             except Exception as _nav_err:
-                # networkidle can time out on slow servers; that's OK — page may still have content
-                logger.warning(f"networkidle timed out ({_nav_err}) — reading page as-is")
+                logger.warning(f"goto timed out ({_nav_err}) — reading page as-is")
 
-            # Confirm job cards are in the DOM (up to 30 s)
+            # Confirm job cards are in the DOM
             logger.info("Waiting for job cards to appear in DOM...")
             job_ready = False
             for _jsel in [
@@ -346,15 +344,15 @@ async def extract_and_post_first_job():
                 '#filter-sort',
             ]:
                 try:
-                    await page.wait_for_selector(_jsel, timeout=5000)
+                    await page.wait_for_selector(_jsel, timeout=6000)
                     logger.info(f"Job content confirmed in DOM: {_jsel}")
                     job_ready = True
                     break
                 except Exception:
                     pass
             if not job_ready:
-                logger.warning("Job cards not found — page may still be loading, adding 5 s buffer")
-                await asyncio.sleep(5)
+                logger.warning("Job cards not found — adding short 2s buffer")
+                await asyncio.sleep(2)
 
             # Sort results by Date
 

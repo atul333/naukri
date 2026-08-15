@@ -100,8 +100,16 @@ class NaukriJobScraper:
 
             # ── Use Firefox (Ultra-Low Memory & CPU Optimized) ────────────────────────
             logger.info("Launching Firefox (headless, low-resource profile)...")
+            moz_env = os.environ.copy()
+            moz_env["MOZ_HEADLESS_WIDTH"] = "1366"
+            moz_env["MOZ_HEADLESS_HEIGHT"] = "768"
+            moz_env["LIBGL_ALWAYS_SOFTWARE"] = "0"
+            moz_env["MOZ_WEBRENDER"] = "0"
+            moz_env["MOZ_DISABLE_CONTENT_SANDBOX"] = "1"
+            
             self.browser = await self.playwright.firefox.launch(
                 headless=True,
+                env=moz_env,
                 firefox_user_prefs={
                     # Disable telemetry & data reporting
                     "datareporting.policy.dataSubmissionPolicyAccepted": True,
@@ -109,10 +117,13 @@ class NaukriJobScraper:
                     "toolkit.telemetry.enabled":                         False,
                     "browser.startup.homepage":                          "about:blank",
 
-                    # ── Critical RAM & CPU Optimizations (Prevents multiple child processes) ──
+                    # ── Critical RAM & CPU Optimizations (Prevents software WebRender threads) ──
                     "browser.tabs.remote.autostart":                     False,  # Completely disable multi-process (e10s) mode!
                     "dom.ipc.processCount":                              1,      # Single process
                     "dom.ipc.processCount.web":                          1,
+                    "gfx.webrender.all":                                 False,  # Disable CPU WebRender software rasterizer
+                    "gfx.webrender.software":                            False,  # Disable software fallback renderer
+                    "layers.acceleration.disabled":                      True,   # Disable acceleration threads
                     "browser.cache.disk.enable":                         False,  # Disable disk caching
                     "browser.cache.memory.enable":                       False,  # Disable memory caching
                     "browser.sessionhistory.max_entries":                1,
@@ -121,10 +132,9 @@ class NaukriJobScraper:
                     "media.peerconnection.enabled":                      False,
                     "media.navigator.enabled":                           False,
                     "media.autoplay.default":                            5,
-                    "layers.acceleration.disabled":                      True,
                 }
             )
-            logger.info("Firefox launched successfully (single-process mode)")
+            logger.info("Firefox launched successfully (zero-render single-process mode)")
 
             
             # Configure context for Firefox
