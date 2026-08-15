@@ -181,12 +181,93 @@ class NaukriJobScraper:
                 }
             ])
             
-            # Add comprehensive stealth scripts
+            # Add comprehensive stealth scripts — defeats headless browser detection
+            # Naukri checks navigator.webdriver, plugins, chrome object, permissions etc.
             await self.context.add_init_script("""
-                // Override webdriver property with more properties
+                // 1. Hide webdriver flag
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => false,
                     enumerable: true,
+                    configurable: true
+                });
+
+                // 2. Spoof plugins (headless has 0 plugins)
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => {
+                        const arr = [
+                            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                            { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                        ];
+                        arr.__proto__ = PluginArray.prototype;
+                        return arr;
+                    }
+                });
+
+                // 3. Spoof mimeTypes
+                Object.defineProperty(navigator, 'mimeTypes', {
+                    get: () => {
+                        const arr = [
+                            { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: {} }
+                        ];
+                        arr.__proto__ = MimeTypeArray.prototype;
+                        return arr;
+                    }
+                });
+
+                // 4. Inject window.chrome (missing in headless)
+                if (!window.chrome) {
+                    window.chrome = {
+                        runtime: {
+                            PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
+                            PlatformArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64' },
+                            PlatformNaclArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64' },
+                            RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
+                            OnInstalledReason: { INSTALL: 'install', UPDATE: 'update', CHROME_UPDATE: 'chrome_update', SHARED_MODULE_UPDATE: 'shared_module_update' },
+                            OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }
+                        }
+                    };
+                }
+
+                // 5. Fix permissions API (headless returns 'denied' for notifications)
+                const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
+                if (originalQuery) {
+                    window.navigator.permissions.query = (parameters) =>
+                        parameters.name === 'notifications'
+                            ? Promise.resolve({ state: Notification.permission })
+                            : originalQuery(parameters);
+                }
+
+                // 6. Spoof languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                    configurable: true
+                });
+
+                // 7. Spoof hardware concurrency (headless often returns 2)
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => 8,
+                    configurable: true
+                });
+
+                // 8. Spoof device memory
+                Object.defineProperty(navigator, 'deviceMemory', {
+                    get: () => 8,
+                    configurable: true
+                });
+
+                // 9. Spoof WebGL renderer (reveals headless if not spoofed)
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) return 'Intel Inc.';          // UNMASKED_VENDOR_WEBGL
+                    if (parameter === 37446) return 'Intel Iris OpenGL Engine'; // UNMASKED_RENDERER_WEBGL
+                    return getParameter.call(this, parameter);
+                };
+
+                // 10. Remove 'HeadlessChrome' from user agent reported by JS
+                // (the HTTP header UA is set correctly already, but JS can also read it)
+                Object.defineProperty(navigator, 'userAgent', {
+                    get: () => navigator.userAgent.replace('HeadlessChrome', 'Chrome'),
                     configurable: true
                 });
             """)
