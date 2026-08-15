@@ -123,7 +123,7 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                 # Get user's preferred job keywords, experience, and location
                 preferences = user_data.get("preferences", {})
                 user_keywords = preferences.get("job_keywords", "").lower()
-                user_experience_str = preferences.get("experience", "0")
+                user_experience = preferences.get("experience", "0")
                 user_location = preferences.get("location", "").lower()
                 
                 # Skip if user hasn't set any keywords
@@ -131,7 +131,7 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                     continue
                 
                 # Parse user experience range
-                user_min_exp, user_max_exp = parse_exp_range(user_experience_str)
+                user_min_exp, user_max_exp = parse_exp_range(user_experience)
                 
                 # Split user keywords by comma
                 keywords_list = [k.strip() for k in user_keywords.split(',') if k.strip()]
@@ -508,6 +508,54 @@ async def extract_and_process_job(page, scraper):
         return False
 
 
+async def run_single_scan(scraper, job_url):
+    """
+    Opens browser ONLY when scanning is triggered, sorts by date, extracts the latest job,
+    posts to Telegram channel and matching VIP users, and immediately closes the browser completely.
+    """
+    logger.info("=" * 60)
+    logger.info("🔍 [SCAN TRIGGERED] Opening browser for job extraction...")
+    logger.info("=" * 60)
+    
+    browser_cm = scraper.get_browser_context()
+    try:
+        async with browser_cm as context:
+            page = await context.new_page()
+            
+            # Abort heavy assets (images, fonts, media) to cut RAM and bandwidth
+            try:
+                await page.route(
+                    "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot,mp4,mp3,avi,wav,flv,mkv}",
+                    lambda route: route.abort()
+                )
+            except Exception as _r_err:
+                logger.warning(f"Could not set route filter: {_r_err}")
+            
+            await page.set_viewport_size({"width": 1366, "height": 768})
+            
+            desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+            await page.set_extra_http_headers({
+                'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
+                'User-Agent': desktop_user_agent
+            })
+            
+            logger.info(f"Navigating to {job_url}...")
+            await page.goto(job_url, wait_until='domcontentloaded', timeout=35000)
+            await asyncio.sleep(2)
+            
+            # Sort by date on page load
+            await ensure_sorted_by_date(page)
+            
+            # Extract and post latest job
+            logger.info("Extracting latest job...")
+            await extract_and_process_job(page, scraper)
+            
+    except Exception as e:
+        logger.error(f"Error during scan: {e}")
+    finally:
+        logger.info("🔒 [SCAN COMPLETED] Browser closed and memory released.")
+
+
 async def main_scheduler():
     telegram_token = TELEGRAM_TOKEN
     channel_id = "@IT_Job_openings_Naukri"
@@ -523,78 +571,32 @@ async def main_scheduler():
         logger.error(f"Startup advertisement failed: {e}")
 
     job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch&forceDesktop=true"
+    scan_interval = 60  # seconds between scans
     
     while True:
         try:
-            logger.info("🚀 Initializing Persistent Browser Session...")
-            browser_cm = scraper.get_browser_context()
-            
-            async with browser_cm as context:
-                page = await context.new_page()
-                
-                # Abort heavy assets (images, fonts, media) to cut RAM and CPU
+            # 1. Trigger scan - browser is opened ONLY for the duration of this call
+            await run_single_scan(scraper, job_url)
+            gc.collect()
+
+            # 2. Check scheduled advertisement interval (every 60 mins)
+            if time.time() - last_ad_time >= 3600:
                 try:
-                    await page.route(
-                        "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot,mp4,mp3,avi,wav,flv,mkv}",
-                        lambda route: route.abort()
-                    )
-                except Exception as _r_err:
-                    logger.warning(f"Could not set route filter: {_r_err}")
-                
-                await page.set_viewport_size({"width": 1366, "height": 768})
-                
-                desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
-                await page.set_extra_http_headers({
-                    'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
-                    'User-Agent': desktop_user_agent
-                })
-                
-                logger.info(f"Navigating to {job_url}...")
-                await page.goto(job_url, wait_until='domcontentloaded', timeout=35000)
-                await asyncio.sleep(2)
-                
-                # Sort by date on initial page load
-                await ensure_sorted_by_date(page)
-                
-                # Extract and post first job immediately
-                logger.info("Extracting first job on initial load...")
-                await extract_and_process_job(page, scraper)
-                
-                logger.info("🟢 Persistent Browser Active! Entering 60s idle loop (0.0% CPU)...")
-                
-                while True:
-                    # 60s idle sleep — CPU is strictly 0.0% during this period!
-                    await asyncio.sleep(60)
+                    logger.info("Posting scheduled advertisement to channel...")
+                    send_advertisement_to_channel(telegram_token, channel_id)
+                    last_ad_time = time.time()
+                except Exception as e:
+                    logger.error(f"Advertisement posting failed: {e}")
 
-                    # Check 60-minute advertisement interval
-                    if time.time() - last_ad_time >= 3600:
-                        try:
-                            logger.info("Posting scheduled advertisement to channel...")
-                            send_advertisement_to_channel(telegram_token, channel_id)
-                            last_ad_time = time.time()
-                        except Exception as e:
-                            logger.error(f"Advertisement posting failed: {e}")
-
-                    # Fast reload (takes < 1 second since browser is already in memory)
-                    logger.info("⚡ Refreshing page for newest jobs...")
-                    try:
-                        await page.reload(wait_until='domcontentloaded', timeout=25000)
-                    except Exception as reload_err:
-                        logger.warning(f"Reload timed out ({reload_err}), navigating fresh...")
-                        await page.goto(job_url, wait_until='domcontentloaded', timeout=35000)
-                    
-                    await asyncio.sleep(2)
-                    
-                    # Extract and post latest job
-                    await extract_and_process_job(page, scraper)
-                    logger.info("Cycle complete. Going idle for 60s (0% CPU)...")
-                    gc.collect()
+            # 3. Wait until next scanning trigger (browser is completely closed during this sleep)
+            logger.info(f"⏳ Next scan in {scan_interval}s. Browser is closed (idle).")
+            await asyncio.sleep(scan_interval)
 
         except asyncio.CancelledError:
             logger.info("Scraper scheduler stopped")
             break
         except Exception as e:
-            logger.error(f"Persistent browser session exception: {e}. Restarting session in 10s...")
+            logger.error(f"Scheduler cycle exception: {e}. Retrying in 10s...")
             cleanup_zombies()
             await asyncio.sleep(10)
 

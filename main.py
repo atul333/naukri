@@ -287,21 +287,27 @@ class NaukriJobScraper:
             return self.context
             
         async def __aexit__(self, exc_type, exc_val, exc_tb):
-            try:
-                if self.context:
+            if self.context:
+                try:
                     await self.context.close()
-            except Exception:
-                pass
-            try:
-                if self.browser:
+                except Exception:
+                    pass
+                finally:
+                    self.context = None
+            if self.browser:
+                try:
                     await self.browser.close()
-            except Exception:
-                pass
-            try:
-                if self.playwright:
+                except Exception:
+                    pass
+                finally:
+                    self.browser = None
+            if self.playwright:
+                try:
                     await self.playwright.stop()
-            except Exception:
-                pass
+                except Exception:
+                    pass
+                finally:
+                    self.playwright = None
     
     def get_browser_context(self):
         """Return a context manager for browser context"""
@@ -1223,6 +1229,10 @@ class NaukriJobScraper:
             # If we can't extract the job ID, return the original URL
             # This ensures the link will always work
             return url
+
+    def encrypt_job_link(self, url):
+        """Alias for encrypt_job_url"""
+        return self.encrypt_job_url(url)
         
     async def post_job_to_telegram(self, job):
         """Post a job to the Telegram channel"""
