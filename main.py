@@ -1063,33 +1063,28 @@ class NaukriJobScraper:
         if not ctc or ctc.upper() == 'NA':
             ctc = "Best in Industry / As per Norms"
         
-        # World-Class Ultra-Modern Job Card Layout
+        # Compact, Small, Sleek Job Card Layout (No naukri.com, no Direct Apply section, tight spacing)
         message = (
-            "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
-            "⚡ <b>NEW TECH OPENING • NAUKRI.COM</b>\n"
-            "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n"
+            "⚡ <b>NEW TECH OPENING</b>\n\n"
             f"💼 <b>Role:</b> <b>{title}</b>\n"
-            f"🏢 <b>Company:</b> <b>{company}</b>\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📊 <b>JOB SPECIFICATIONS:</b>\n"
+            f"🏢 <b>Company:</b> {company}\n"
             f"⏳ <b>Experience:</b> <code>{experience}</code>\n"
             f"📍 <b>Location:</b> <code>{location}</code>\n"
             f"💰 <b>Salary / CTC:</b> <code>{ctc}</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"\n🏷️ <b>Skills & Domains:</b>\n{hashtags}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🚀 <b>Direct Apply:</b> <a href=\"{encrypted_link}\">Click Here to Apply on Naukri</a>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 <i>Get instant private alerts matching your tech stack:</i> @Premium_Naukri_bot"
         )
+        
+        if hashtags and hashtags.strip():
+            message += f"\n🏷️ {hashtags.strip()}\n"
+            
+        message += "\n💡 <i>Get instant matching alerts:</i> @Premium_Naukri_bot"
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         reply_markup = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("⚡ Quick Apply on Naukri", url=encrypted_link)
+                InlineKeyboardButton("⚡ Quick Apply", url=encrypted_link)
             ],
             [
-                InlineKeyboardButton("💎 Get Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
+                InlineKeyboardButton("💎 Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
             ]
         ])
         

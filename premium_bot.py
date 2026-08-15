@@ -141,7 +141,7 @@ def build_dashboard_text(user, user_data):
     if not is_complete:
         dashboard += (
             "💡 <i>Complete your profile below to get real-time private alerts</i>\n"
-            "<i>whenever a matching job is posted on Naukri.com!</i>"
+            "<i>whenever a matching job is posted!</i>"
         )
     else:
         dashboard += (
@@ -231,7 +231,7 @@ async def show_presets_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     text = (
         "⚡ <b>POPULAR TECH STACK PRESETS</b>\n\n"
-        "Select your domain to automatically apply curated high-frequency Naukri keywords:\n"
+        "Select your domain to automatically apply curated high-frequency tech keywords:\n"
     )
     for p in PRESET_STACKS.values():
         text += f"• <b>{p['label']}:</b> <code>{p['keywords']}</code>\n"
@@ -533,7 +533,7 @@ async def handle_location_button(update: Update, context: ContextTypes.DEFAULT_T
         f"🎉 <b>PREFERENCES FULLY CONFIGURED!</b>\n\n"
         f"📍 <b>Location:</b> <code>{loc_val}</code>\n\n"
         "🟢 <b>VIP Alert Engine is ACTIVE.</b> You will now receive matching jobs "
-        "directly in this chat the moment they appear on Naukri.com!",
+        "directly in this chat the moment they are posted!",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
@@ -561,7 +561,7 @@ async def save_location_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"🎉 <b>PREFERENCES FULLY CONFIGURED!</b>\n\n"
         f"📍 <b>Location:</b> <code>{loc}</code>\n\n"
         "🟢 <b>VIP Alert Engine is ACTIVE.</b> You will now receive matching jobs "
-        "directly in this chat the moment they appear on Naukri.com!",
+        "directly in this chat the moment they are posted!",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
@@ -629,17 +629,14 @@ async def test_match_preview(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     sample_job = (
         "🧪 <b>SAMPLE NOTIFICATION PREVIEW</b>\n\n"
-        "<i>Here is how a matched job will appear in your private chat:</i>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 <b>Senior {keywords.split(',')[0].strip()} Specialist</b>\n\n"
-        "🏢 <b>Company:</b> Global Tech Solutions\n\n"
-        f"⏳ <b>Experience:</b> {exp}-8 Yrs\n\n"
-        f"📍 <b>Location:</b> {loc.split(',')[0].strip()}\n\n"
-        "💰 <b>CTC:</b> ₹ 18 - 30 Lacs P.A.\n\n"
-        f"#{(keywords.split(',')[0].strip()).replace(' ', '')} #NaukriAlert #VIPMatch\n\n"
-        "🔗 <b>Apply Link:</b> https://www.naukri.com/job-listings-sample\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⚡ <i>Matches are delivered in under 60 seconds of posting on Naukri.com!</i>"
+        "⚡ <b>NEW TECH OPENING</b>\n\n"
+        f"💼 <b>Role:</b> <b>Senior {keywords.split(',')[0].strip()} Specialist</b>\n"
+        "🏢 <b>Company:</b> Global Tech Solutions\n"
+        f"⏳ <b>Experience:</b> <code>{exp}-8 Yrs</code>\n"
+        f"📍 <b>Location:</b> <code>{loc.split(',')[0].strip()}</code>\n"
+        "💰 <b>Salary / CTC:</b> <code>₹ 18 - 30 Lacs P.A.</code>\n\n"
+        f"🏷️ #{(keywords.split(',')[0].strip()).replace(' ', '')} #VIPAlert\n\n"
+        "⚡ <i>Matches are delivered in under 60 seconds of posting!</i>"
     )
 
     keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="nav_main_menu")]]
@@ -653,8 +650,8 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.answer()
 
     help_text = (
-        "ℹ️ <b>HOW THE VIP NAUKRI BOT WORKS</b>\n\n"
-        "1️⃣ <b>Live Scraper:</b> Our cloud scraper scans Naukri.com 24/7 for newly published IT jobs.\n"
+        "ℹ️ <b>HOW THE VIP ALERT BOT WORKS</b>\n\n"
+        "1️⃣ <b>Live Scraper:</b> Our cloud scraper scans 24/7 for newly published IT jobs.\n"
         "2️⃣ <b>Smart Filter:</b> Every single job is parsed for title, skill hashtags, required experience, and location.\n"
         "3️⃣ <b>Instant Direct Delivery:</b> If a job matches your keywords, experience range, and city, it is sent to this private chat instantly!\n\n"
         "💡 <b>Tips for Best Matches:</b>\n"

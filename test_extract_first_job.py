@@ -258,15 +258,13 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                         apply_target = job_url if (job_url and job_url.startswith('http')) else (f"https://www.naukri.com{job_url}" if job_url else "https://www.naukri.com")
                         dm_keyboard = InlineKeyboardMarkup([
-                            [InlineKeyboardButton("⚡ Quick Apply on Naukri", url=apply_target)],
-                            [InlineKeyboardButton("⚙️ Update VIP Preferences", url="https://t.me/Premium_Naukri_bot")]
+                            [InlineKeyboardButton("⚡ Quick Apply", url=apply_target)],
+                            [InlineKeyboardButton("⚙️ VIP Preferences", url="https://t.me/Premium_Naukri_bot")]
                         ])
                         
                         personalized_message = (
-                            "╔═════════════════════════════════╗\n"
-                            "🔔 <b>NEW VIP MATCHING JOB ALERT</b>\n"
-                            "╚═════════════════════════════════╝\n\n"
-                            f"🎯 <b>Match Criteria:</b> <code>{user_keywords}</code> • <code>{user_experience} Yrs</code>\n\n"
+                            "🔔 <b>NEW MATCHING JOB ALERT</b>\n"
+                            f"🎯 <code>{user_keywords}</code> • <code>{user_experience} Yrs</code>\n\n"
                             f"{message}"
                         )
                         await bot.send_message(
@@ -849,38 +847,28 @@ async def extract_and_post_first_job():
                 if not ctc_clean or ctc_clean.upper() == 'NA':
                     ctc_clean = "Best in Industry / As per Norms"
                 
-                # World-Class Ultra-Modern Job Card Layout
+                # Compact, Small, Sleek Job Card Layout (No naukri.com, no Direct Apply section, tight spacing)
                 message = (
-                    "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
-                    "⚡ <b>NEW TECH OPENING • NAUKRI.COM</b>\n"
-                    "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n"
+                    "⚡ <b>NEW TECH OPENING</b>\n\n"
                     f"💼 <b>Role:</b> <b>{title_clean}</b>\n"
-                    f"🏢 <b>Company:</b> <b>{company_clean}</b>\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    "📊 <b>JOB SPECIFICATIONS:</b>\n"
+                    f"🏢 <b>Company:</b> {company_clean}\n"
                     f"⏳ <b>Experience:</b> <code>{experience_clean}</code>\n"
                     f"📍 <b>Location:</b> <code>{location_clean}</code>\n"
                     f"💰 <b>Salary / CTC:</b> <code>{ctc_clean}</code>\n"
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 )
                 
                 if hashtag_str and hashtag_str.strip():
-                    message += f"\n🏷️ <b>Skills & Domains:</b>\n{hashtag_str}\n\n"
+                    message += f"\n🏷️ {hashtag_str.strip()}\n"
                     
-                message += (
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🚀 <b>Direct Apply:</b> <a href=\"{encrypted_link}\">Click Here to Apply on Naukri</a>\n"
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    "💡 <i>Get instant private alerts matching your tech stack:</i> @Premium_Naukri_bot"
-                )
+                message += "\n💡 <i>Get instant matching alerts:</i> @Premium_Naukri_bot"
                 
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                 job_keyboard = InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton("⚡ Quick Apply on Naukri", url=encrypted_link)
+                        InlineKeyboardButton("⚡ Quick Apply", url=encrypted_link)
                     ],
                     [
-                        InlineKeyboardButton("💎 Get Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
+                        InlineKeyboardButton("💎 Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
                     ]
                 ])
                 
