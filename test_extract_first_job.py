@@ -1200,7 +1200,8 @@ async def main_scheduler():
             # Run scheduled job scraper
             logger.info("Running scheduled job scraper...")
             await extract_and_post_first_job()
-            logger.info("Scheduled scrape cycle complete")
+            logger.info("Scheduled scrape cycle complete — cleaning resources")
+            cleanup_zombies()
             gc.collect()
         except asyncio.CancelledError:
             logger.info("Scraper scheduler stopped")
@@ -1224,6 +1225,21 @@ if __name__ == "__main__":
                 subprocess.run(["pkill", "-9", "-f", "playwright"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
+
+    # Terminate any duplicate running test_extract_first_job instances
+    if os.name != 'nt':
+        try:
+            current_pid = os.getpid()
+            out = subprocess.check_output(["pgrep", "-f", "test_extract_first_job.py"]).decode().split()
+            for pid_str in out:
+                p = int(pid_str.strip())
+                if p != current_pid:
+                    try:
+                        os.kill(p, 9)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     # Clean up old zombie browser processes before starting
     cleanup_zombies()
