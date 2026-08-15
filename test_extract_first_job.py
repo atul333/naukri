@@ -369,8 +369,33 @@ async def extract_and_post_first_job():
             try:
                 sorted_by_date = False
 
-                # Strategy 1: Use #filter-sort button
-                sort_button = await page.query_selector('#filter-sort')
+                # ── Strategy 1: click the sort button then the Date option ──────────────────
+                # Try many possible selectors for the sort/filter button across Naukri layouts
+                sort_button_selectors = [
+                    '#filter-sort',
+                    '[id*="sort"]',
+                    'button[class*="sort"]',
+                    'div[class*="sort"]',
+                    'span[class*="sort"]',
+                    '[data-test="sort"]',
+                    '[aria-label*="sort" i]',
+                    '[title*="sort" i]',
+                    # Naukri desktop layout
+                    '.filter-sort',
+                    '.sortby',
+                    '.sort-by',
+                ]
+
+                sort_button = None
+                for _sbsel in sort_button_selectors:
+                    try:
+                        sort_button = await page.query_selector(_sbsel)
+                        if sort_button:
+                            logger.info(f"Found sort button with selector: {_sbsel}")
+                            break
+                    except Exception:
+                        pass
+
                 if sort_button:
                     current_sort = await sort_button.inner_text()
                     logger.info(f"Current sort option: {current_sort.strip()}")
@@ -378,70 +403,96 @@ async def extract_and_post_first_job():
                         logger.info("Already sorted by Date")
                         sorted_by_date = True
                     else:
-                        logger.info("Sorting by Date via #filter-sort button...")
+                        logger.info("Opening sort dropdown via click...")
                         await sort_button.click()
                         await asyncio.sleep(3)
 
-                        # Try clicking Date option by data-id
-                        date_option = await page.query_selector('a[data-id="filter-sort-f"]')
-                        if date_option:
-                            await date_option.click()
-                            logger.info("Clicked Date sort option (data-id selector)")
-                            await asyncio.sleep(10)
-                            sorted_by_date = True
-                        else:
-                            # Fallback: text-based selectors
-                            for sel in [
-                                'ul[data-filter-id="sort"] li[title="Date"]',
-                                'ul[data-filter-id="sort"] a:has-text("Date")',
-                                '.filter-sort-options a:has-text("Date")',
-                                'li:has-text("Date") a',
-                                'a:has-text("Date")',
-                            ]:
-                                try:
-                                    opt = await page.query_selector(sel)
-                                    if opt:
-                                        await opt.click()
-                                        logger.info(f"Clicked Date sort option ({sel})")
-                                        await asyncio.sleep(10)
-                                        sorted_by_date = True
-                                        break
-                                except Exception:
-                                    pass
+                        # Try clicking the Date option after dropdown opens
+                        date_option_selectors = [
+                            'a[data-id="filter-sort-f"]',
+                            'ul[data-filter-id="sort"] li[title="Date"]',
+                            'ul[data-filter-id="sort"] a:has-text("Date")',
+                            '.filter-sort-options a:has-text("Date")',
+                            'li:has-text("Date") a',
+                            '[data-id*="sort"][data-id*="date" i]',
+                            'a:has-text("Date")',
+                        ]
+                        for sel in date_option_selectors:
+                            try:
+                                opt = await page.query_selector(sel)
+                                if opt:
+                                    await opt.click()
+                                    logger.info(f"Clicked Date sort option ({sel})")
+                                    await asyncio.sleep(10)
+                                    sorted_by_date = True
+                                    break
+                            except Exception:
+                                pass
 
+                # ── Strategy 2: JavaScript — open dropdown then click Date ──────────────────
                 if not sorted_by_date:
                     logger.warning("Standard selectors failed. Trying JavaScript-based sort-by-date...")
-                    # Strategy 2: Use JavaScript to click the Date sort option
-                    js_sorted = await page.evaluate("""
+                    js_result = await page.evaluate("""
                         () => {
-                            // Try by data-id
-                            let el = document.querySelector('a[data-id="filter-sort-f"]');
-                            if (el) { el.click(); return 'data-id click'; }
-                            // Try by text content
-                            const anchors = Array.from(document.querySelectorAll('a, li, button'));
-                            for (const a of anchors) {
-                                if (a.textContent.trim() === 'Date') { a.click(); return 'text click'; }
+                            // Step 1: try to open the sort dropdown by clicking any sort button
+                            const sortTriggers = [
+                                document.querySelector('#filter-sort'),
+                                document.querySelector('[id*="sort"]'),
+                                document.querySelector('button[class*="sort"]'),
+                                document.querySelector('div[class*="sort"]'),
+                                document.querySelector('.sortby'),
+                                ...Array.from(document.querySelectorAll('button, span, div'))
+                                    .filter(el => el.textContent.trim().toLowerCase() === 'relevance'
+                                             || el.textContent.trim().toLowerCase() === 'sort by'),
+                            ].filter(Boolean);
+
+                            let opened = false;
+                            for (const trigger of sortTriggers) {
+                                try { trigger.click(); opened = true; break; } catch(e) {}
                             }
-                            return null;
+
+                            // Step 2: after opening, find and click the "Date" option
+                            // Try immediate click first (in case dropdown is already open)
+                            let el = document.querySelector('a[data-id="filter-sort-f"]');
+                            if (el) { el.click(); return 'data-id click (immediate)'; }
+
+                            // Try all anchors/buttons/li whose visible text is exactly "Date"
+                            const candidates = Array.from(document.querySelectorAll('a, li, button, span'));
+                            for (const c of candidates) {
+                                if (c.textContent.trim() === 'Date') {
+                                    c.click();
+                                    return 'text-match click (opened=' + opened + ')';
+                                }
+                            }
+                            return opened ? 'opened dropdown but Date option not found' : null;
                         }
                     """)
-                    if js_sorted:
-                        logger.info(f"JavaScript sort result: {js_sorted}")
+                    if js_result:
+                        logger.info(f"JavaScript sort result: {js_result}")
                         await asyncio.sleep(10)
-                        sorted_by_date = True
-                    else:
-                        logger.warning("JavaScript sort also failed — using URL approach")
-                        # Strategy 3: Append sort parameter to URL
-                        current_url = page.url
-                        if 'sort=' not in current_url:
-                            sorted_url = current_url + ('&' if '?' in current_url else '?') + 'sort=1'
+                        if 'not found' not in js_result:
+                            sorted_by_date = True
                         else:
-                            import re
-                            sorted_url = re.sub(r'sort=\d', 'sort=1', current_url)
-                        logger.info(f"Navigating to sort-by-date URL: {sorted_url}")
-                        await page.goto(sorted_url, wait_until='domcontentloaded', timeout=60000)
-                        await asyncio.sleep(10)
-                        sorted_by_date = True
+                            # Dropdown opened but Date was not in the DOM yet — wait and retry once
+                            logger.info("Dropdown opened, retrying Date click after short wait...")
+                            await asyncio.sleep(3)
+                            js_retry = await page.evaluate("""
+                                () => {
+                                    let el = document.querySelector('a[data-id="filter-sort-f"]');
+                                    if (el) { el.click(); return 'retry data-id click'; }
+                                    const candidates = Array.from(document.querySelectorAll('a, li, button, span'));
+                                    for (const c of candidates) {
+                                        if (c.textContent.trim() === 'Date') { c.click(); return 'retry text click'; }
+                                    }
+                                    return null;
+                                }
+                            """)
+                            if js_retry:
+                                logger.info(f"Retry JS result: {js_retry}")
+                                await asyncio.sleep(10)
+                                sorted_by_date = True
+                    else:
+                        logger.warning("JavaScript sort failed — proceeding with current page order (no URL navigation)")
 
                 logger.info(f"Sort by date applied: {sorted_by_date}")
 
