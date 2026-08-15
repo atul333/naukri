@@ -1172,14 +1172,20 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Advertisement posting failed: {str(e)}")
     
-    # Start premium bot directly (no need for threading)
-    logger.info("Starting premium bot...")
+    # Start premium bot in a background thread so it does not block the job scraper
+    logger.info("Starting premium bot in background thread...")
     try:
-        premium_bot_updater = run_premium_bot(PREMIUM_TOKEN)
-        logger.info("Premium bot started")
-    except (TimedOut, NetworkError) as e:
-        logger.warning(f"Telegram connection error: {e}. Continuing with other functionality.")
-        # Continue with the rest of the script without the bot
+        def _run_bot():
+            try:
+                run_premium_bot(PREMIUM_TOKEN)
+            except Exception as e:
+                logger.error(f"Premium bot encountered error: {e}")
+
+        bot_thread = threading.Thread(target=_run_bot, name="PremiumBotThread", daemon=True)
+        bot_thread.start()
+        logger.info("Premium bot started in background thread")
+    except Exception as e:
+        logger.warning(f"Failed to start premium bot thread: {e}. Continuing with scraper.")
     
     # Run immediately on startup
     logger.info("Running job scraper immediately on startup")
