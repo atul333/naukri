@@ -330,7 +330,77 @@ async def extract_and_post_first_job():
             
             # Wait for the page to load completely
             await asyncio.sleep(15)  # Increased wait time for page to fully load
-            
+
+            # ── Pre-sort diagnostic: save HTML + screenshot to debug Linux headless issues ──
+            try:
+                pre_sort_html = await page.content()
+                with open("pre_sort_page.html", "w", encoding="utf-8") as f:
+                    f.write(pre_sort_html)
+                logger.info("Saved pre-sort page HTML to pre_sort_page.html")
+            except Exception as _de:
+                logger.warning(f"Could not save pre-sort HTML: {_de}")
+
+            try:
+                await page.screenshot(path="before_sort.png", full_page=False)
+                logger.info("Saved pre-sort screenshot to before_sort.png")
+            except Exception as _de:
+                logger.warning(f"Could not save pre-sort screenshot: {_de}")
+
+            # ── JS diagnostic: log what sort-related elements actually exist on the page ──
+            try:
+                sort_probe = await page.evaluate("""
+                    () => {
+                        const results = {};
+                        // Check each expected selector
+                        const checks = {
+                            '#filter-sort':          document.querySelector('#filter-sort'),
+                            '[id*=sort]':            document.querySelector('[id*="sort"]'),
+                            'button[class*=sort]':   document.querySelector('button[class*="sort"]'),
+                            'div[class*=sort]':      document.querySelector('div[class*="sort"]'),
+                            '.sortby':               document.querySelector('.sortby'),
+                            '.sort-by':              document.querySelector('.sort-by'),
+                            '.filter-sort':          document.querySelector('.filter-sort'),
+                        };
+                        for (const [sel, el] of Object.entries(checks)) {
+                            results[sel] = el ? (el.textContent.trim().substring(0, 50) || '<no text>') : 'NOT FOUND';
+                        }
+                        // Also list any element whose text is 'Relevance' or 'Sort'
+                        const byText = Array.from(document.querySelectorAll('*'))
+                            .filter(el => {
+                                const t = (el.childNodes.length === 1 && el.firstChild.nodeType === 3)
+                                    ? el.textContent.trim() : '';
+                                return t === 'Relevance' || t === 'Sort by' || t === 'Date';
+                            })
+                            .map(el => el.tagName + '.' + el.className + ': ' + el.textContent.trim())
+                            .slice(0, 10);
+                        results['textMatches'] = byText;
+                        return results;
+                    }
+                """)
+                logger.info(f"Sort element probe results: {sort_probe}")
+            except Exception as _de:
+                logger.warning(f"Sort probe JS failed: {_de}")
+
+            # ── Wait for any interactive element to confirm JS has rendered ──────────────
+            page_ready = False
+            ready_selectors = [
+                '#filter-sort', '[id*="sort"]', 'button[class*="sort"]',
+                '.sortby', '.sort-by', '.filter-sort',
+                # fallback: any job card or heading means page rendered
+                'h2', 'article', '.jobTuple', '[class*="srp-jobtuple"]',
+            ]
+            for _rs in ready_selectors:
+                try:
+                    await page.wait_for_selector(_rs, timeout=8000)
+                    logger.info(f"Page ready — element found: {_rs}")
+                    page_ready = True
+                    break
+                except Exception:
+                    pass
+            if not page_ready:
+                logger.warning("No ready elements found — page may still be loading, waiting extra 5 s")
+                await asyncio.sleep(5)
+
             # Check for and handle rotation message
             try:
                 rotation_message = await page.query_selector('text="Please rotate your device"')
