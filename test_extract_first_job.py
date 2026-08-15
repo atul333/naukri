@@ -424,7 +424,7 @@ async def extract_and_process_job(page, scraper):
             
         encrypted_link = scraper.encrypt_job_link(job_url) if job_url else "https://www.naukri.com"
         
-        # Extract skills & generate hashtags
+        # Extract skills & generate hashtags (Max 3 hashtags)
         skill_tags = target_job.select('.tag-li, .tags-gt li, [class*="tag"], [class*="skill"], .dot-gt')
         extracted_skills = []
         for st in skill_tags:
@@ -433,16 +433,21 @@ async def extract_and_process_job(page, scraper):
                 extracted_skills.append(t)
         
         hashtag_list = []
-        for s in extracted_skills[:6]:
+        for s in extracted_skills:
             tag = re.sub(r'[^a-zA-Z0-9]', '', s)
             if tag:
                 hashtag_list.append(f"#{tag}")
+            if len(hashtag_list) >= 3:
+                break
         
         if not hashtag_list:
             words = [w for w in re.split(r'[^a-zA-Z0-9]', title_clean) if len(w) > 2]
-            for w in words[:4]:
+            for w in words:
                 hashtag_list.append(f"#{w}")
+                if len(hashtag_list) >= 3:
+                    break
                 
+        hashtag_list = hashtag_list[:3]
         hashtag_str = " ".join(hashtag_list)
         
         message = (

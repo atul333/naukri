@@ -1002,20 +1002,29 @@ class NaukriJobScraper:
             
         encrypted_link = self.encrypt_job_url(job['apply_link'])
         
-        # Build clean hashtag string
+        # Build clean hashtag string (Max 3 hashtags)
         skills = job.get('skills', [])
         import re as _re
+        hashtag_list = []
         if skills:
-            hashtags = ' '.join(
-                '#' + _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
-                for s in skills if s
-            )
+            for s in skills:
+                tag = _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
+                if tag:
+                    hashtag_list.append(f"#{tag}")
+                if len(hashtag_list) >= 3:
+                    break
         else:
             title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job.get('title', ''))
-            hashtags = ' '.join([f"#{w}" for w in title_words if len(w) > 2])
+            for w in title_words:
+                if len(w) > 2:
+                    hashtag_list.append(f"#{w}")
+                if len(hashtag_list) >= 3:
+                    break
         
-        if not hashtags:
-            hashtags = f"#{job.get('category', 'IT')}Jobs #Hiring"
+        if not hashtag_list:
+            hashtag_list = [f"#{job.get('category', 'IT')}Jobs"]
+        
+        hashtags = ' '.join(hashtag_list[:3])
         
         title = job.get('title', 'Job Opening').strip()
         company = job.get('company', 'Top Tech Organization').strip()
@@ -1201,19 +1210,26 @@ class NaukriJobScraper:
         # Falls back to title words if no skills found
         import re as _re
         skills = job.get('skills', [])
+        hashtag_list = []
         if skills:
-            # Convert each skill to a clean hashtag: remove spaces/special chars
-            hashtags = ' '.join(
-                '#' + _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
-                for s in skills if s
-            )
+            for s in skills:
+                tag = _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
+                if tag:
+                    hashtag_list.append(f"#{tag}")
+                if len(hashtag_list) >= 3:
+                    break
         else:
-            # Fallback: use words from job title
             title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job['title'])
-            hashtags = ' '.join([f"#{w}" for w in title_words if len(w) > 2])
+            for w in title_words:
+                if len(w) > 2:
+                    hashtag_list.append(f"#{w}")
+                if len(hashtag_list) >= 3:
+                    break
         
-        if not hashtags:
-            hashtags = f"#{job.get('category', 'IT')}Jobs"
+        if not hashtag_list:
+            hashtag_list = [f"#{job.get('category', 'IT')}Jobs"]
+        
+        hashtags = ' '.join(hashtag_list[:3])
         
         experience = job.get('experience', 'Not specified')
         ctc = job.get('ctc', 'NA') or 'NA'
@@ -1320,11 +1336,26 @@ class NaukriJobScraper:
                         ctc = job.get('ctc', 'NA') or 'NA'
                         skills = job.get('skills', [])
                         import re as _re
+                        hashtag_list = []
                         if skills:
-                            hashtags = ' '.join('#' + _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', '')) for s in skills if s)
+                            for s in skills:
+                                tag = _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
+                                if tag:
+                                    hashtag_list.append(f"#{tag}")
+                                if len(hashtag_list) >= 3:
+                                    break
                         else:
                             title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job['title'])
-                            hashtags = ' '.join(f"#{w}" for w in title_words if len(w) > 2)
+                            for w in title_words:
+                                if len(w) > 2:
+                                    hashtag_list.append(f"#{w}")
+                                if len(hashtag_list) >= 3:
+                                    break
+                        
+                        if not hashtag_list:
+                            hashtag_list = [f"#{job.get('category', 'IT')}Jobs"]
+                        
+                        hashtags = ' '.join(hashtag_list[:3])
                         
                         msg = (
                             f"🔔 *Job Match Alert!*\n\n"
