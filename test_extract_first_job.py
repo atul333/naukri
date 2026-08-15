@@ -269,945 +269,332 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
     except Exception as e:
         logger.error(f"Error in send_job_to_matching_premium_users: {str(e)}")
 
-async def extract_and_post_first_job():
-    logger.info("Starting extraction of first job")
-    
-    # Initialize scraper with Telegram credentials
-    telegram_token = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
-    channel_id = "@IT_Job_openings_Naukri"
-    logger.info(f"Running with Telegram bot token and channel: {channel_id}")
-    
-    scraper = NaukriJobScraper(telegram_token, channel_id)
-    
-    try:
-        # Get the browser context manager
-        browser_context_manager = scraper.get_browser_context()
-        
-        # Use the browser context manager
-        async with browser_context_manager as context:
-            # Create a new page
-            page = await context.new_page()
-            
-            # Abort heavy assets (images, fonts, media) to cut RAM and CPU by 80% on server
-            try:
-                await page.route(
-                    "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot,mp4,mp3,avi,wav,flv,mkv}",
-                    lambda route: route.abort()
-                )
-            except Exception as _r_err:
-                logger.warning(f"Could not set route filter: {_r_err}")
-            
-            # Set viewport to a standard desktop size
-            await page.set_viewport_size({"width": 1920, "height": 1080})
-            
-            desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
-            
-            await page.set_extra_http_headers({
-                'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
-                'User-Agent': desktop_user_agent
-            })
-            
-            # Set user agent at context level using the correct method
-            # Note: Playwright doesn't have page.set_user_agent(), we already set it in headers
-            
-            # Navigate to the job URL with desktop mode parameters
-            job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch&forceDesktop=true"
-            logger.info(f"Navigating to {job_url} with desktop mode parameters")
-            
-            # Add extra parameters to request headers to force desktop version
-            await page.set_extra_http_headers({
-                'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
-                'User-Agent': desktop_user_agent,
-                'Sec-CH-UA-Mobile': '?0',  # Indicate not a mobile device
-                'Sec-CH-UA-Platform': '"Windows"',  # Indicate Windows platform
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            })
-            
-            # Fast DOM load (2-3 seconds instead of spinning 90s on networkidle)
-            logger.info("Navigating to page (fast DOM load)...")
-            try:
-                await page.goto(job_url, wait_until='domcontentloaded', timeout=30000)
-                logger.info("DOM content loaded")
-            except Exception as _nav_err:
-                logger.warning(f"goto timed out ({_nav_err}) — reading page as-is")
 
-            # Confirm job cards are in the DOM
-            logger.info("Waiting for job cards to appear in DOM...")
-            job_ready = False
-            for _jsel in [
-                '.srp-jobtuple-wrapper', 'article.jobTupleWrapper', '.jobTuple',
-                'div[data-job-id]', '[class*="srp-jobtuple"]', '[class*="jobTuple"]',
-                '#filter-sort',
-            ]:
-                try:
-                    await page.wait_for_selector(_jsel, timeout=6000)
-                    logger.info(f"Job content confirmed in DOM: {_jsel}")
-                    job_ready = True
+async def ensure_sorted_by_date(page):
+    logger.info("Attempting to sort results by Date")
+    try:
+        sorted_by_date = False
+
+        # Step 1: open the sort dropdown
+        # Try CSS selectors first (fast path — works on Windows)
+        sort_button = None
+        for _sbsel in ['#filter-sort', '[id*="sort"]', 'div[class*="sort"]',
+                       'span[class*="sort"]', '.filter-sort', '.sortby', '.sort-by']:
+            try:
+                sort_button = await page.query_selector(_sbsel)
+                if sort_button:
+                    logger.info(f"Found sort button: {_sbsel}")
                     break
-                except Exception:
-                    pass
-            if not job_ready:
-                logger.warning("Job cards not found — adding short 2s buffer")
+            except Exception:
+                pass
+
+        if sort_button:
+            txt = await sort_button.inner_text()
+            if "date" in txt.lower():
+                logger.info("Already sorted by Date")
+                sorted_by_date = True
+            else:
+                await sort_button.click()
+                logger.info("Clicked sort button, waiting for dropdown...")
                 await asyncio.sleep(2)
 
-            # Sort results by Date
-
-            # Step 1: click the sort button to open the dropdown.
-            # Step 2: click 'Date' in the dropdown.
-            logger.info("Attempting to sort results by Date")
-            try:
-                sorted_by_date = False
-
-                # Step 1: open the sort dropdown
-                # Try CSS selectors first (fast path — works on Windows)
-                sort_button = None
-                for _sbsel in ['#filter-sort', '[id*="sort"]', 'div[class*="sort"]',
-                               'span[class*="sort"]', '.filter-sort', '.sortby', '.sort-by']:
-                    try:
-                        sort_button = await page.query_selector(_sbsel)
-                        if sort_button:
-                            logger.info(f"Found sort button: {_sbsel}")
-                            break
-                    except Exception:
-                        pass
-
-                if sort_button:
-                    txt = await sort_button.inner_text()
-                    if "date" in txt.lower():
-                        logger.info("Already sorted by Date")
-                        sorted_by_date = True
-                    else:
-                        await sort_button.click()
-                        logger.info("Clicked sort button, waiting for dropdown...")
-                        await asyncio.sleep(2)
-
-                # Step 2: click 'Date' option (via JS — works even when CSS selector misses)
-                if not sorted_by_date:
-                    clicked = await page.evaluate("""
-                        () => {
-                            // If dropdown not open yet, find and click the sort trigger
-                            // Look for element containing 'Sort by:' or whose leaf text is 'Relevance'
-                            const allEls = Array.from(document.querySelectorAll('*'));
-                            for (const el of allEls) {
-                                const t = el.textContent.trim();
-                                if ((t.startsWith('Sort by:') || t === 'Relevance') &&
-                                     el.children.length <= 2) {
-                                    el.click();
-                                    break;
-                                }
-                            }
-                            // Now click 'Date' option
-                            // 1. by data-id attribute
-                            let dateEl = document.querySelector('a[data-id="filter-sort-f"]');
-                            if (dateEl) { dateEl.click(); return 'data-id'; }
-                            // 2. by exact text content
-                            for (const el of Array.from(document.querySelectorAll('a, li, span, button'))) {
-                                if (el.textContent.trim() === 'Date') {
-                                    el.click();
-                                    return 'text-Date';
-                                }
-                            }
-                            return null;
+        # Step 2: click 'Date' option (via JS — works even when CSS selector misses)
+        if not sorted_by_date:
+            clicked = await page.evaluate("""
+                () => {
+                    // If dropdown not open yet, find and click the sort trigger
+                    // Look for element containing 'Sort by:' or whose leaf text is 'Relevance'
+                    const allEls = Array.from(document.querySelectorAll('*'));
+                    for (const el of allEls) {
+                        const t = el.textContent.trim();
+                        if ((t.startsWith('Sort by:') || t === 'Relevance') &&
+                             el.children.length <= 2) {
+                            el.click();
+                            break;
                         }
-                    """)
-                    if clicked:
-                        logger.info(f"Clicked Date sort via JS ({clicked}), waiting for page to re-sort...")
-                        await asyncio.sleep(2)
-                        sorted_by_date = True
-                    else:
-                        logger.warning("Could not find Date sort option — continuing with current order")
-
-                logger.info(f"Sort by date: {sorted_by_date}")
-
-            except Exception as e:
-                logger.error(f"Error sorting by date: {str(e)}")
-                logger.info("Continuing with default sorting")
-
-            # Get page content for BeautifulSoup parsing
-            page_content = await page.content()
-
-            
-            # Use BeautifulSoup to extract job information directly
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(page_content, 'html.parser')
-            
-            # Look for the first job card after sorting by date
-            logger.info("Looking for the first job card after sorting by date")
-            
-            # Try to find job cards with various selectors (modern + legacy Naukri selectors)
-            # Broader selector list to handle different Naukri HTML structures on Linux vs Windows
-            job_cards = soup.select(
-                '.srp-jobtuple-wrapper, '
-                'article.jobTupleWrapper, '
-                '.jobTuple, '
-                '.job-tuple, '
-                '[class*="srp-jobtuple"], '
-                '[class*="NormalCard"], '
-                'div[data-job-id], '
-                '.SRPstyle__NormalCardStyle-sc-1rnhgwh-0, '
-                'article[class*="job"], '
-                'li[class*="job"], '
-                'div[class*="jobTuple"], '
-                'div[class*="job-card"], '
-                'div[class*="JobCard"]'
-            )
-            logger.info(f"Found {len(job_cards)} potential job cards")
-
-            # If still 0 cards, try a last-resort broader search: any element containing
-            # a link to /job-listings/ or /job-detail/ that wraps a title-like heading
-            if not job_cards:
-                logger.warning("Standard selectors found 0 cards — trying last-resort link-based search")
-                # Find all <a> tags pointing to job URLs and collect their closest block-level ancestor
-                seen_ancestors = set()
-                fallback_cards = []
-                for a_tag in soup.find_all('a', href=True):
-                    href = a_tag['href']
-                    if '/job-listings' in href or '/job-detail' in href:
-                        # Walk up to find a meaningful container (div/article/li)
-                        ancestor = a_tag.find_parent(['article', 'li', 'div'])
-                        if ancestor and id(ancestor) not in seen_ancestors:
-                            seen_ancestors.add(id(ancestor))
-                            fallback_cards.append(ancestor)
-                if fallback_cards:
-                    logger.info(f"Last-resort search found {len(fallback_cards)} job-link containers")
-                    job_cards = fallback_cards
-                else:
-                    logger.warning("Last-resort search also found 0 containers")
-            
-            target_job = None
-            
-            # Get the first job card
-            if job_cards:
-                target_job = job_cards[0]
-                title_element = target_job.select_one(
-                    '.title, .job-title, [class*="title"], '
-                    '.jobTupleHeader .title, h2.jobTitle, '
-                    'h2, h3, .srpHdr, .list-job-title'
-                )
-                if title_element:
-                    logger.info(f"Found first job: {title_element.text.strip()}")
-                else:
-                    logger.info("Found first job card but couldn't extract title")
-            else:
-                logger.warning("No job cards found on the page")
-            
-            if target_job:
-                # Extract all required information from the job card
-                title_element = target_job.select_one(
-                    '.title, .job-title, [class*="title"], '
-                    '.jobTupleHeader .title, h2.jobTitle, '
-                    'h2, h3, .srpHdr, .list-job-title'
-                )
-                if not title_element:
-                    logger.warning("Could not extract job title, skipping this job")
-                    return
-                title = title_element.text.strip()
-                
-                # Extract company name with expanded selectors for desktop version
-                company_element = target_job.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo, [data-test="company-name"], [class*="comp"], [class*="org"], [itemprop="hiringOrganization"]')
-                if not company_element:
-                    # Try to find company name in parent or sibling elements
-                    parent_element = target_job.parent
-                    if parent_element:
-                        company_element = parent_element.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo')
-                    
-                    # If still not found, try to find any text that might be a company name
-                    if not company_element:
-                        # Look for any element that might contain company information
-                        all_elements = target_job.select('span, div, a, p')
-                        for element in all_elements:
-                            text = element.text.strip()
-                            # Skip elements with very long text (likely not a company name)
-                            if len(text) > 0 and len(text) < 50 and text != title:
-                                company_element = element
-                                break
-                    
-                    if not company_element:
-                        logger.warning("Could not extract company name, skipping this job")
-                        return
-                
-                # Clean up company name - remove reviews and ratings completely
-                company_text = company_element.text.strip()
-                # Extract only the company name without reviews, ratings, or numbers
-                import re
-                # First split by "Reviews" or "Review" if present
-                if "Reviews" in company_text:
-                    company = company_text.split("Reviews")[0].strip()
-                elif "Review" in company_text:
-                    company = company_text.split("Review")[0].strip()
-                else:
-                    company = company_text
-                
-                # Remove any trailing numbers, decimal points, and special characters
-                company = re.sub(r'\d+\.?\d*$', '', company)  # Remove trailing numbers like ratings
-                company = re.sub(r'[^a-zA-Z\s]', '', company)  # Keep only letters and spaces
-                company = company.strip()
-                
-                # Extract experience
-                experience_element = target_job.select_one('.expwdth, .ellipsis.fleft.fs12.lh16, [class*="experience"], [class*="exp"]')
-                experience = experience_element.text.strip() if experience_element else "Not specified"
-                
-                # Extract location
-                location_element = target_job.select_one('.locWdth, .locWdth span.ellipsis, .location, [class*="location"], [class*="loc"]')
-                location = location_element.text.strip() if location_element else "Not specified"
-                
-                # Extract posted date
-                posted_date_element = target_job.select_one('.job-post-day, .fleft.postedDate, .postedDate, .date, [class*="day"]')
-                posted_date = posted_date_element.text.strip() if posted_date_element else "Just Now"
-                
-                # Extract CTC (Cost to Company)
-                ctc = "NA"
-                import re
-                
-                # Try to find salary information in specific elements
-                salary_selectors = [
-                    '.salary-span', 
-                    '.salary', 
-                    '[class*="salary"]', 
-                    '[class*="ctc"]', 
-                    '[class*="package"]', 
-                    '[class*="lacs"]'
-                ]
-                
-                # First try specific salary selectors
-                for selector in salary_selectors:
-                    salary_element = target_job.select_one(selector)
-                    if salary_element and salary_element.text.strip():
-                        text = salary_element.text.strip()
-                        # Look for patterns like "10-15 LPA" or "12 Lakhs"
-                        salary_pattern = re.search(r'(\d+(?:\.\d+)?\s*(?:-\s*\d+(?:\.\d+)?)?\s*(?:lacs|lpa|lakhs|inr|₹|pa|l\.p\.a))', text.lower())
-                        if salary_pattern:
-                            ctc = salary_pattern.group(1).upper()
-                            if 'LPA' not in ctc and 'LACS' not in ctc and 'LAKHS' not in ctc:
-                                ctc += " LPA"
-                            break
-                
-                # If not found with specific selectors, try to find in all elements
-                if ctc == "NA":
-                    all_elements = target_job.select('span, div, a, p')
-                    for element in all_elements:
-                        text = element.text.strip()
-                        # Skip if it's the company name or too long
-                        if text == company_text or len(text) > 30:
-                            continue
-                            
-                        # Look for text containing salary indicators
-                        if any(term in text.lower() for term in ['lacs', 'lpa', 'lakhs', 'inr', '₹', 'pa', 'ctc', 'salary']):
-                            # Extract just the salary part
-                            salary_pattern = re.search(r'(\d+(?:\.\d+)?\s*(?:-\s*\d+(?:\.\d+)?)?\s*(?:lacs|lpa|lakhs|inr|₹|pa|l\.p\.a))', text.lower())
-                            if salary_pattern:
-                                ctc = salary_pattern.group(1).upper()
-                                if 'LPA' not in ctc and 'LACS' not in ctc and 'LAKHS' not in ctc:
-                                    ctc += " LPA"
-                                break
-                
-                # Extract job role
-                job_role_element = target_job.select_one('.job-role, [class*="role"], [class*="designation"]')
-                job_role = job_role_element.text.strip() if job_role_element else title
-                
-                # HARDCODED HASHTAGS FOR SPECIFIC JOB TYPES
-                # This is the most reliable approach based on the examples provided
-                
-                # Consultant-Collibra/DG job
-                if "Collibra" in title or "DG" in title:
-                    hashtag_str = "#DataGovernance #colibra #DataQuality #DG #Quality #Data #Governance"
-                    return hashtag_str
-                    
-                # Mobile App Developer job
-                elif "Mobile App Developer" in title or "App Developer" in title:
-                    hashtag_str = "#AppDevelopment #IOS #UWP #Publishing #MySQL #Java"
-                    return hashtag_str
-                    
-                # Testing Freelancer job
-                elif "Testing Freelancer" in title:
-                    hashtag_str = "#ProjectManagement #ProficiencyinProgrammingLanguages #AutomationTesting #Test"
-                    return hashtag_str
-                    
-                # Generic fallback for any testing-related job
-                elif "Testing" in title or "Test" in title:
-                    hashtag_str = "#ProjectManagement #ProficiencyinProgrammingLanguages #AutomationTesting #Test"
-                    return hashtag_str
-                    
-                # Extract hashtags from job listing categories (fallback for other job types)
-                hashtags = []
-                
-                # For all other job types, try to extract categories
-                # Try to extract categories from the job listing
-                category_elements = target_job.select('[class*="chip"], [class*="tag"], [class*="category"], .categories a, .tags a')
-                if category_elements:
-                    for element in category_elements:
-                        category_text = element.text.strip()
-                        if category_text and len(category_text) < 30:
-                            hashtags.append("#" + category_text.replace(" ", ""))
-                
-                # If no categories found, try to find elements with bullet points
-                if not hashtags:
-                    category_text = None
-                    for selector in ['.categories', '.tags', '[class*="categories"]', '[class*="tags"]']:
-                        element = target_job.select_one(selector)
-                        if element:
-                            category_text = element.text.strip()
-                            break
-                    
-                    if category_text:
-                        # Split by common separators
-                        if '•' in category_text:
-                            categories = [cat.strip() for cat in category_text.split('•') if cat.strip()]
-                        elif '|' in category_text:
-                            categories = [cat.strip() for cat in category_text.split('|') if cat.strip()]
-                        elif ',' in category_text:
-                            categories = [cat.strip() for cat in category_text.split(',') if cat.strip()]
-                        else:
-                            categories = []
-                        
-                        # Add categories if they're reasonably sized
-                        for category in categories:
-                            if category and len(category) < 30:
-                                hashtags.append("#" + category.replace(" ", ""))
-                    
-                    # Look for category tags which appear as links or spans with short text
-                    # These are typically displayed as a row of categories like "Data Governance • collibra • Data Quality • DG"
-                    category_selectors = [
-                        'a.chip, a.tag, a.category, span.chip, span.tag, span.category',
-                        '.categories a, .categories span',
-                        '.tags a, .tags span',
-                        '[class*="category"] a, [class*="category"] span',
-                        '[class*="tag"] a, [class*="tag"] span'
-                    ]
-                    
-                    for selector in category_selectors:
-                        category_elements = target_job.select(selector)
-                        if category_elements:
-                            for category in category_elements:
-                                category_text = category.text.strip()
-                                if category_text and len(category_text) < 30:  # Reasonable length for a category
-                                    hashtags.append(category_text)
-                    
-                    # If no categories found, try to find elements with bullet points or separators
-                    if not hashtags:
-                        # Look for elements that might contain categories separated by bullets or other separators
-                        potential_category_containers = target_job.select('div, p, span')
-                        for container in potential_category_containers:
-                            text = container.text.strip()
-                            # Check if text contains bullet points or other common separators
-                            if '•' in text or '|' in text or ',' in text:
-                                # Split by common separators
-                                if '•' in text:
-                                    categories = [cat.strip() for cat in text.split('•') if cat.strip()]
-                                elif '|' in text:
-                                    categories = [cat.strip() for cat in text.split('|') if cat.strip()]
-                                elif ',' in text:
-                                    categories = [cat.strip() for cat in text.split(',') if cat.strip()]
-                                
-                                # Add categories if they're reasonably sized
-                                for category in categories:
-                                    if len(category) < 30:
-                                        hashtags.append(category)
-                
-                # Clean up hashtags - remove duplicates and format properly
-                hashtags = list(set([tag.strip() for tag in hashtags if tag.strip()]))
-                
-                # If still no hashtags found, fallback to extracting from job title and role
-                if not hashtags:
-                    # Try to extract meaningful words from title and job role
-                    import re
-                    words = re.findall(r'\b[A-Za-z]+\b', title + " " + job_role)
-                    relevant_words = [word for word in words if len(word) > 3 and word.lower() not in 
-                                     ['and', 'the', 'for', 'with', 'this', 'that', 'from', 'have', 'will']]
-                    hashtags = relevant_words[:5]  # Limit to 5 words from title/role
-                
-                # If we have the job title with a slash (like Consultant-Collibra/DG), extract parts
-                if '-' in title or '/' in title:
-                    parts = re.split(r'[-/]', title)
-                    for part in parts:
-                        part = part.strip()
-                        if part and part not in hashtags and len(part) < 30:
-                            hashtags.append(part)
-                
-                # Get job URL directly from the job card
-                job_url = ""
-                
-                # Try multiple approaches to find the job URL
-                # 1. Look for any link in the job card
-                links = target_job.find_all('a')
-                for link in links:
-                    if link.get('href'):
-                        href = link.get('href')
-                        # Check if this is a job detail link
-                        if any(pattern in href for pattern in ['/job-listings/', '/job-detail/', 'jobid=', 'jdUrl=']):
-                            job_url = href
-                            if not job_url.startswith('http'):
-                                job_url = 'https://www.naukri.com' + job_url
-                            logging.info(f"Found job URL from link: {job_url}")
-                            break
-                
-                # 2. If no specific job link found, look for any link in the job card
-                if not job_url and links:
-                    for link in links:
-                        if link.get('href'):
-                            href = link.get('href')
-                            if href and not href.startswith('#') and not href.startswith('javascript:'):
-                                job_url = href
-                                if not job_url.startswith('http'):
-                                    job_url = 'https://www.naukri.com' + job_url
-                                logging.info(f"Found general URL from job card: {job_url}")
-                                break
-                
-                # 3. If still no link, try to extract job ID from any attribute and construct URL
-                if not job_url:
-                    # Look for job ID in any attribute
-                    job_id = None
-                    for tag in target_job.find_all():
-                        for attr_name, attr_value in tag.attrs.items():
-                            if isinstance(attr_value, str) and 'jobid' in attr_value.lower():
-                                # Try to extract job ID using regex
-                                import re
-                                match = re.search(r'jobid=([^&]+)', attr_value.lower())
-                                if match:
-                                    job_id = match.group(1)
-                                    break
-                        if job_id:
-                            break
-                    
-                    # If job ID found, construct URL
-                    if job_id:
-                        job_url = f"https://www.naukri.com/job-detail/{job_id}"
-                        logging.info(f"Constructed job URL from job ID: {job_url}")
-                    else:
-                        # Try to construct URL from title
-                        job_url = f"https://www.naukri.com/job-listings?title={title.replace(' ', '+')}"
-                        logging.info(f"Constructed job URL from title: {job_url}")
-                
-                # If we have a job URL, use it as the apply link
-                if job_url:
-                    logging.info(f"Using job URL as apply link: {job_url}")
-                else:
-                    logging.warning("Could not find any job URL")
-                    job_url = f"https://www.naukri.com/job-listings?title={title.replace(' ', '+')}"
-                    logging.info(f"Using search URL as fallback: {job_url}")
-                
-                # Create job dictionary with all extracted information
-                # Generate a job_id from the title
-                import re
-                job_id = re.sub(r'[^a-zA-Z0-9]', '_', title.lower())
-                job_id = re.sub(r'_+', '_', job_id)  # Replace multiple underscores with a single one
-                job_id = job_id.strip('_')  # Remove leading/trailing underscores
-                
-                job = {
-                    'job_id': job_id,
-                    'title': title,
-                    'company': company,
-                    'experience': experience,
-                    'location': location,
-                    'job_role': job_role,
-                    'ctc': ctc,
-                    'hashtags': hashtags,
-                    'apply_link': job_url
-                }
-                
-                # Format message for Telegram with the specific order requested
-                # Format hashtags from all extracted categories (no limit)
-                # Remove any existing # symbols and add a single one
-                # Filter out job title and "save" from hashtags
-                filtered_hashtags = [tag for tag in hashtags 
-                                    if tag.lower().replace("#", "").replace(" ", "") != title.lower().replace(" ", "") 
-                                    and tag.lower().replace("#", "").replace(" ", "") != "save"
-                                    and tag.lower().replace("#", "").replace(" ", "") != "modulelead"
-                                    and tag.lower().replace("#", "").replace(" ", "") != "lead"]
-                hashtag_str = ' '.join([f'#{tag.replace("#", "").replace(" ", "")}' for tag in filtered_hashtags])
-                
-                # Encrypt the job URL for privacy
-                encrypted_link = scraper.encrypt_job_url(job['apply_link'])
-                logger.info(f"Original link: {job['apply_link']}")
-                logger.info(f"Encrypted link: {encrypted_link}")
-                
-                title_clean = job.get('title', 'Job Opening').strip()
-                company_clean = job.get('company', 'Top Tech Organization').strip()
-                experience_clean = job.get('experience', 'Not specified').strip()
-                location_clean = job.get('location', 'Pan India / Remote').strip()
-                ctc_clean = job.get('ctc', 'Not Disclosed').strip()
-                if not ctc_clean or ctc_clean.upper() == 'NA':
-                    ctc_clean = "Best in Industry / As per Norms"
-                
-                # Compact Job Card Layout with Role at the top
-                message = (
-                    f"💼 <b>Role:</b> <b>{title_clean}</b>\n\n"
-                    f"🏢 <b>Company:</b> {company_clean}\n"
-                    f"⏳ <b>Experience:</b> <code>{experience_clean}</code>\n"
-                    f"📍 <b>Location:</b> <code>{location_clean}</code>\n"
-                    f"💰 <b>Salary / CTC:</b> <code>{ctc_clean}</code>\n"
-                )
-                
-                if hashtag_str and hashtag_str.strip():
-                    message += f"\n🏷️ {hashtag_str.strip()}\n"
-                    
-                message += "\n💡 <i>Get instant matching alerts:</i> @Premium_Naukri_bot"
-                
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-                job_keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("⚡ Quick Apply", url=encrypted_link)
-                    ],
-                    [
-                        InlineKeyboardButton("💎 Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
-                    ]
-                ])
-                
-                # Check if this job URL has been posted before
-                posted_urls_file = "posted_job_urls.txt"
-                
-                # Create the file if it doesn't exist
-                if not os.path.exists(posted_urls_file):
-                    with open(posted_urls_file, "w", encoding="utf-8") as f:
-                        f.write("# This file contains all job URLs that have been posted to Telegram\n")
-                
-                # Read all posted URLs
-                with open(posted_urls_file, "r", encoding="utf-8") as f:
-                    posted_urls = f.read().splitlines()
-                
-                # If the URL is in the list, it's a duplicate - skip it
-                if job_url in posted_urls:
-                    logger.info(f"Skipping duplicate job URL: {job_url}")
-                    return False
-                
-                # Also check for similar jobs by title and company in the posted URLs file
-                job_details_file = "job_details.json"
-                
-                # Create job details file if it doesn't exist
-                if not os.path.exists(job_details_file):
-                    with open(job_details_file, "w", encoding="utf-8") as f:
-                        f.write("{}")
-                
-                # Read existing job details
-                try:
-                    with open(job_details_file, "r", encoding="utf-8") as f:
-                        job_details = json.load(f)
-                except (json.JSONDecodeError, FileNotFoundError):
-                    job_details = {}
-                
-                # Check for similar jobs (all four fields must match: title, company, location, experience)
-                for key, details in job_details.items():
-                    if (details.get("title") == title and 
-                        details.get("company") == company and
-                        details.get("location") == location and
-                        details.get("experience") == experience):
-                        logger.info(f"Skipping duplicate job: {title} at {company} with location {location} and experience {experience}")
-                        return False
-                
-                # Extract hashtags from the message
-                hashtags = []
-                if "#" in message:
-                    # Extract all hashtags from the message
-                    hashtags = re.findall(r'#\w+', message)
-                
-                # Store this job in the job details file
-                job_details[job_url] = {
-                    "title": title,
-                    "company": company,
-                    "location": location,
-                    "experience": experience,
-                    "posted_date": posted_date,
-                    "hashtags": hashtags,
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                # Write updated job details back to file
-                with open(job_details_file, "w", encoding="utf-8") as f:
-                    json.dump(job_details, f, indent=2)
-                
-                # Send custom formatted message to Telegram
-                if scraper.telegram_token and scraper.channel_id:
-                    try:
-                        logger.info("Attempting to send message to Telegram")
-                        # Use the scraper's send_telegram_message method with HTML formatting & inline buttons
-                        result = await scraper.send_telegram_message(message, parse_mode='HTML', reply_markup=job_keyboard)
-                        if result:
-                            logger.info(f"Posted job to Telegram with custom format")
-                            # Add this URL to the posted URLs file
-                            with open(posted_urls_file, "a", encoding="utf-8") as f:
-                                f.write(f"{job_url}\n")
-                        else:
-                            logger.warning("Failed to post job to Telegram using send_telegram_message")
-                    except Exception as e:
-                        logger.error(f"Failed to send message to Telegram: {str(e)}")
-                        logger.info(f"Job details were extracted successfully: {job}")
-                        logger.info(f"Message that would have been sent:\n{message}")
-                else:
-                    logger.info("Telegram credentials not provided, skipping message")
-                
-                # Send job to premium users with matching job titles, experience, and location
-                # This happens regardless of Telegram success
-                logger.info(f"Sending job to premium users with title: '{title}', experience: '{experience}', and location: '{location}'")
-                try:
-                    # Pass job_url as the last parameter
-                    await send_job_to_matching_premium_users(title, message, scraper.telegram_token, experience, location, job_url)
-                    logger.info("Successfully processed job for premium users")
-                except Exception as e:
-                    logger.error(f"Error sending job to premium users: {str(e)}")
-                
-                logger.info(f"Extracted job details: {job}")
-                return
-            
-            # If we couldn't find any job card, log the issue and return without posting
-            logger.warning("No job cards found on the page, no job information to post")
-            logger.info("Exiting without posting any job as no valid job data was extracted from the website")
-            
-            # Take a full page screenshot to help diagnose the issue
-            try:
-                await page.screenshot(path="no_jobs_found.png", timeout=10000, full_page=True)
-                logger.info("Saved full page screenshot to no_jobs_found.png")
-            except Exception as e:
-                logger.warning(f"Failed to take screenshot: {str(e)}")
-                
-            # Exit the function without posting anything
-            return
-            return
-            
-            # Take a screenshot to see what's on the page
-            try:
-                await page.screenshot(path="naukri_page.png", timeout=10000)
-                logger.info("Saved screenshot to naukri_page.png")
-            except Exception as e:
-                logger.warning(f"Failed to take screenshot: {str(e)}")
-                logger.info("Continuing without screenshot")
-            
-            # Wait for job listings to appear - try different selectors
-            try:
-                # Try multiple selectors that might contain job listings, starting with more specific ones
-                selectors = [
-                    '.jobTuple', 
-                    '.jobCard', 
-                    '.job-card', 
-                    '.joblist-comp', 
-                    '.list', 
-                    '.srp-jobtuple',
-                    'article.jobTupleWrapper',
-                    '.SRPstyle__NormalCardStyle-sc-1rnhgwh-0',
-                    'div[data-job-id]'
-                ]
-                
-                first_job_element = None
-                for selector in selectors:
-                    logger.info(f"Trying selector: {selector}")
-                    try:
-                        # Wait with a shorter timeout for each selector
-                        await page.wait_for_selector(selector, timeout=10000)
-                        first_job_element = await page.query_selector(selector)
-                        if first_job_element:
-                            logger.info(f"Found job element with selector: {selector}")
-                            break
-                    except Exception as e:
-                        logger.info(f"Selector {selector} not found: {str(e)}")
-                
-                # If no selectors worked, try getting page content
-                if not first_job_element:
-                    logger.info("No job elements found with standard selectors, analyzing page content")
-                    page_content = await page.content()
-                    with open("page_content.html", "w", encoding="utf-8") as f:
-                        f.write(page_content)
-                    logger.info("Saved page content to page_content.html")
-                    
-                    # Try to find any job-related elements in the page
-                    all_elements = await page.query_selector_all('a[href*="/job-listings"], a[href*="/job-detail"], div[class*="job"]')
-                    if all_elements:
-                        logger.info(f"Found {len(all_elements)} potential job-related elements")
-                        first_job_element = all_elements[0]
-                    
-                    # Use BeautifulSoup as a fallback to extract job information directly
-                    from bs4 import BeautifulSoup
-                    soup = BeautifulSoup(page_content, 'html.parser')
-                    
-                    # Try to find job titles directly in the HTML with specific selectors for the Naukri.com layout
-                    job_titles = soup.select('.jobTupleHeader .title, h2.jobTitle, .title, h2, h3, .srpHdr, .list-job-title')
-                    if job_titles and not first_job_element:
-                        logger.info(f"Found {len(job_titles)} job titles using BeautifulSoup")
-                        # Create a simple dictionary to hold job info
-                        job = {
-                            'job_id': 'first_job',
-                            'title': job_titles[0].text.strip(),
-                            'company': 'Unknown Company',
-                            'location': 'Unknown Location',
-                            'posted_date': 'Unknown Date',
-                            'apply_link': ''
-                        }
-                        
-                        # Try to find the company name
-                        company_element = job_titles[0].find_parent().find_parent().select_one('.companyName, .company, [class*="company"]')
-                        if company_element:
-                            job['company'] = company_element.text.strip()
-                        
-                        # Try to find the job URL
-                        job_link = job_titles[0].find_parent('a') or job_titles[0].find('a')
-                        if job_link and job_link.get('href'):
-                            job['apply_link'] = job_link.get('href')
-                            if not job['apply_link'].startswith('http'):
-                                job['apply_link'] = 'https://www.naukri.com' + job['apply_link']
-                        
-                        # Post this job to Telegram
-                        await scraper.post_job_to_telegram(job)
-                        logger.info(f"Extracted first job using BeautifulSoup: {job['title']}")
-                        return
-                
-                if first_job_element:
-                    # Try different selectors for job details with more specific ones first
-                    title_selectors = [
-                        'h2.jobTitle', 
-                        '.jobTupleHeader .title', 
-                        '.info .title', 
-                        '.title', 
-                        'h2', 
-                        'h3', 
-                        'a[href*="/job-"]', 
-                        '[class*="title"]', 
-                        '[class*="job-title"]'
-                    ]
-                    company_selectors = ['.companyInfo a.subTitle', '.company', '[class*="company"]', '[class*="org"]']
-                    location_selectors = ['.locWdth span.ellipsis', '.location', '[class*="location"]', '[class*="loc"]']
-                    date_selectors = ['.job-post-day', '.fleft.postedDate', '.date', '[class*="date"]', '[class*="posted"]']
-                    
-                    # Extract job details using multiple possible selectors
-                    title_element = None
-                    for selector in title_selectors:
-                        title_element = await first_job_element.query_selector(selector)
-                        if title_element:
-                            logger.info(f"Found title with selector: {selector}")
-                            break
-                    
-                    company_element = None
-                    for selector in company_selectors:
-                        company_element = await first_job_element.query_selector(selector)
-                        if company_element:
-                            logger.info(f"Found company with selector: {selector}")
-                            break
-                    
-                    location_element = None
-                    for selector in location_selectors:
-                        location_element = await first_job_element.query_selector(selector)
-                        if location_element:
-                            logger.info(f"Found location with selector: {selector}")
-                            break
-                    
-                    posted_date_element = None
-                    for selector in date_selectors:
-                        posted_date_element = await first_job_element.query_selector(selector)
-                        if posted_date_element:
-                            logger.info(f"Found date with selector: {selector}")
-                            break
-                    
-                    # Try to find job URL
-                    job_url = None
-                    title_link = None
-                    
-                    # Try different approaches to get the job URL
-                    link_selectors = ['a.title', 'a[href*="/job-"]', 'a']
-                    for selector in link_selectors:
-                        title_link = await first_job_element.query_selector(selector)
-                        if title_link:
-                            job_url = await title_link.get_attribute('href')
-                            if job_url:
-                                logger.info(f"Found job URL with selector: {selector}")
-                                break
-                    
-                    # If we still don't have a URL but the element itself is a link
-                    if not job_url and await first_job_element.get_attribute('href'):
-                        job_url = await first_job_element.get_attribute('href')
-                        logger.info("Found job URL from the element itself")
-                    
-                    # Extract text content
-                    title = await title_element.inner_text() if title_element else "Unknown Title"
-                    company = await company_element.inner_text() if company_element else "Unknown Company"
-                    location = await location_element.inner_text() if location_element else "Unknown Location"
-                    posted_date = await posted_date_element.inner_text() if posted_date_element else "Unknown Date"
-                    
-                    # Create job object
-                    job = {
-                        'job_id': 'first_job',
-                        'title': title.strip(),
-                        'company': company.strip(),
-                        'location': location.strip(),
-                        'posted_date': posted_date.strip(),
-                        'apply_link': job_url,
-                        'category': 'IT',
-                        'timestamp': 'Now'
                     }
-                    
-                    logger.info(f"Extracted first job: {job['title']} at {job['company']}")
-                    
-                    # Post the job to Telegram
-                    result = await scraper.post_job_to_telegram(job)
-                    
-                    if result:
-                        logger.info("✅ Successfully posted job to Telegram")
-                        
-                        # Send advertisement to channel after successful job posting
-                        check_and_send_advertisement(telegram_token, channel_id)
-                        
-                        # Direct call to send advertisement to ensure it appears after each post
-                        from advertisement import send_advertisement_to_channel
-                        send_advertisement_to_channel(telegram_token, channel_id)
-                        logger.info("✅ Advertisement sent directly after job post")
-                    else:
-                        logger.info("ℹ️ Job not posted to Telegram (expected if credentials are None)")
-                else:
-                    logger.warning("No job listings found")
-            except Exception as e:
-                logger.error(f"Error extracting job: {str(e)}")
-                
+                    // Now click 'Date' option
+                    // 1. by data-id attribute
+                    let dateEl = document.querySelector('a[data-id="filter-sort-f"]');
+                    if (dateEl) { dateEl.click(); return 'data-id'; }
+                    // 2. by exact text content
+                    for (const el of Array.from(document.querySelectorAll('a, li, span, button'))) {
+                        if (el.textContent.trim() === 'Date') {
+                            el.click();
+                            return 'text-Date';
+                        }
+                    }
+                    return null;
+                }
+            """)
+            if clicked:
+                logger.info(f"Clicked Date sort via JS ({clicked}), waiting for page to re-sort...")
+                await asyncio.sleep(2)
+                sorted_by_date = True
+            else:
+                logger.warning("Could not find Date sort option — continuing with current order")
+
+        logger.info(f"Sort by date: {sorted_by_date}")
+
     except Exception as e:
-        logger.error(f"❌ Test failed: {str(e)}")
-        raise
+        logger.error(f"Error sorting by date: {str(e)}")
+
+
+async def extract_and_process_job(page, scraper):
+    """Extracts top job card from page and posts to Telegram + VIP matching users"""
+    try:
+        page_content = await page.content()
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(page_content, 'html.parser')
+        
+        job_cards = soup.select(
+            '.srp-jobtuple-wrapper, '
+            'article.jobTupleWrapper, '
+            '.jobTuple, '
+            '.job-tuple, '
+            '[class*="srp-jobtuple"], '
+            '[class*="NormalCard"], '
+            'div[data-job-id], '
+            '.SRPstyle__NormalCardStyle-sc-1rnhgwh-0, '
+            'article[class*="job"], '
+            'li[class*="job"], '
+            'div[class*="jobTuple"], '
+            'div[class*="job-card"], '
+            'div[class*="JobCard"]'
+        )
+        
+        if not job_cards:
+            logger.warning("No job cards found on page")
+            return False
+            
+        target_job = job_cards[0]
+        title_element = target_job.select_one(
+            '.title, .job-title, [class*="title"], '
+            '.jobTupleHeader .title, h2.jobTitle, '
+            'h2, h3, .srpHdr, .list-job-title'
+        )
+        if not title_element:
+            logger.warning("Could not extract title")
+            return False
+            
+        title = title_element.text.strip()
+        
+        company_element = target_job.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo, [data-test="company-name"], [class*="comp"], [class*="org"], [itemprop="hiringOrganization"]')
+        if not company_element and target_job.parent:
+            company_element = target_job.parent.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo')
+        company = company_element.text.strip() if company_element else "Top Tech Company"
+        
+        exp_element = target_job.select_one('.experience, .exp, [class*="experience"], [class*="exp"], .expwdth, [data-test="experience"], span[class*="exp"]')
+        experience = exp_element.text.strip() if exp_element else "0-5 Yrs"
+        
+        loc_element = target_job.select_one('.location, .loc, [class*="location"], [class*="loc"], .locWdth, [data-test="location"], span[class*="loc"]')
+        location = loc_element.text.strip() if loc_element else "Pan India / Remote"
+        
+        sal_element = target_job.select_one('.salary, .sal, [class*="salary"], [class*="sal"], .ni-job-tuple-icon-srp-rupee, span[class*="sal"]')
+        salary = sal_element.text.strip() if sal_element else "Best in Industry / As per Norms"
+        
+        date_element = target_job.select_one('.date, [class*="date"], .postedDate, [class*="posted"], [data-test="posted-date"]')
+        posted_date = date_element.text.strip() if date_element else "Just Now"
+        
+        job_link_element = target_job.select_one('a[href*="/job-listings"], a[href*="/job-detail"], a.title, a')
+        job_url = job_link_element.get('href', '') if job_link_element else ''
+        if job_url and not job_url.startswith('http'):
+            job_url = 'https://www.naukri.com' + job_url
+            
+        # Clean text
+        title_clean = re.sub(r'[\r\n\t]+', ' ', title).strip()
+        company_clean = re.sub(r'[\r\n\t]+', ' ', company).strip()
+        experience_clean = re.sub(r'[\r\n\t]+', ' ', experience).strip()
+        location_clean = re.sub(r'[\r\n\t]+', ' ', location).strip()
+        ctc_clean = re.sub(r'[\r\n\t]+', ' ', salary).strip()
+        if not ctc_clean or ctc_clean.upper() == 'NA':
+            ctc_clean = "Best in Industry / As per Norms"
+            
+        encrypted_link = scraper.encrypt_job_link(job_url) if job_url else "https://www.naukri.com"
+        
+        # Extract skills & generate hashtags
+        skill_tags = target_job.select('.tag-li, .tags-gt li, [class*="tag"], [class*="skill"], .dot-gt')
+        extracted_skills = []
+        for st in skill_tags:
+            t = st.text.strip()
+            if t and len(t) > 1 and len(t) < 30:
+                extracted_skills.append(t)
+        
+        hashtag_list = []
+        for s in extracted_skills[:6]:
+            tag = re.sub(r'[^a-zA-Z0-9]', '', s)
+            if tag:
+                hashtag_list.append(f"#{tag}")
+        
+        if not hashtag_list:
+            words = [w for w in re.split(r'[^a-zA-Z0-9]', title_clean) if len(w) > 2]
+            for w in words[:4]:
+                hashtag_list.append(f"#{w}")
+                
+        hashtag_str = " ".join(hashtag_list)
+        
+        message = (
+            f"💼 <b>Role:</b> <b>{title_clean}</b>\n\n"
+            f"🏢 <b>Company:</b> {company_clean}\n"
+            f"⏳ <b>Experience:</b> <code>{experience_clean}</code>\n"
+            f"📍 <b>Location:</b> <code>{location_clean}</code>\n"
+            f"💰 <b>Salary / CTC:</b> <code>{ctc_clean}</code>\n"
+        )
+        if hashtag_str:
+            message += f"\n🏷️ {hashtag_str}\n"
+        message += "\n💡 <i>Get instant matching alerts:</i> @Premium_Naukri_bot"
+        
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        job_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚡ Quick Apply", url=encrypted_link)],
+            [InlineKeyboardButton("💎 Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")]
+        ])
+        
+        # Check duplicate URL
+        posted_urls_file = "posted_job_urls.txt"
+        if not os.path.exists(posted_urls_file):
+            with open(posted_urls_file, "w", encoding="utf-8") as f:
+                f.write("# Posted URLs\n")
+                
+        with open(posted_urls_file, "r", encoding="utf-8") as f:
+            posted_urls = f.read().splitlines()
+            
+        if job_url in posted_urls:
+            logger.info(f"Duplicate job URL already posted: {job_url}")
+            return False
+            
+        job_details_file = "job_details.json"
+        try:
+            with open(job_details_file, "r", encoding="utf-8") as f:
+                job_details = json.load(f)
+        except Exception:
+            job_details = {}
+            
+        for key, details in job_details.items():
+            if (details.get("title") == title_clean and 
+                details.get("company") == company_clean and
+                details.get("location") == location_clean and
+                details.get("experience") == experience_clean):
+                logger.info(f"Duplicate job details already posted: {title_clean} at {company_clean}")
+                return False
+                
+        # Save to job_details.json
+        job_details[job_url] = {
+            "title": title_clean,
+            "company": company_clean,
+            "location": location_clean,
+            "experience": experience_clean,
+            "posted_date": posted_date,
+            "hashtags": hashtag_list,
+            "timestamp": datetime.now().isoformat()
+        }
+        with open(job_details_file, "w", encoding="utf-8") as f:
+            json.dump(job_details, f, indent=2)
+            
+        # Post to Telegram channel
+        if scraper.telegram_token and scraper.channel_id:
+            logger.info("Posting new job to Telegram channel...")
+            result = await scraper.send_telegram_message(message, parse_mode='HTML', reply_markup=job_keyboard)
+            if result:
+                logger.info(f"✅ Successfully posted job to Telegram: {title_clean}")
+                with open(posted_urls_file, "a", encoding="utf-8") as f:
+                    f.write(f"{job_url}\n")
+                    
+        # Send to matching premium VIP users
+        await send_job_to_matching_premium_users(title_clean, message, scraper.telegram_token, experience_clean, location_clean, job_url)
+        return True
+    except Exception as e:
+        logger.error(f"Error in extract_and_process_job: {e}")
+        return False
+
 
 async def main_scheduler():
     telegram_token = TELEGRAM_TOKEN
     channel_id = "@IT_Job_openings_Naukri"
-    
-    # 1. Run immediate scrape and advertisement on startup
-    logger.info("Running initial job scraper on startup...")
-    try:
-        await extract_and_post_first_job()
-        gc.collect()
-    except Exception as e:
-        logger.error(f"Startup job scraper failed: {e}")
-        cleanup_zombies()
+    scraper = NaukriJobScraper(telegram_token, channel_id)
 
-    logger.info("Posting initial advertisement on startup...")
+    last_ad_time = time.time()
+    
+    # 1. Post initial advertisement
     try:
+        logger.info("Posting initial advertisement...")
         send_advertisement_to_channel(telegram_token, channel_id)
     except Exception as e:
         logger.error(f"Startup advertisement failed: {e}")
 
-    last_ad_time = time.time()
+    job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch&forceDesktop=true"
     
-    logger.info("Starting automated continuous scraper cycle (every 60s)...")
     while True:
         try:
-            # Idle sleep - CPU is strictly 0.0% during sleep
-            await asyncio.sleep(60)
-
-            # Check if 60 minutes have passed for advertisement
-            if time.time() - last_ad_time >= 3600:
+            logger.info("🚀 Initializing Persistent Browser Session...")
+            browser_cm = scraper.get_browser_context()
+            
+            async with browser_cm as context:
+                page = await context.new_page()
+                
+                # Abort heavy assets (images, fonts, media) to cut RAM and CPU
                 try:
-                    logger.info("Posting scheduled advertisement to channel...")
-                    send_advertisement_to_channel(telegram_token, channel_id)
-                    last_ad_time = time.time()
-                except Exception as e:
-                    logger.error(f"Advertisement posting failed: {e}")
+                    await page.route(
+                        "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot,mp4,mp3,avi,wav,flv,mkv}",
+                        lambda route: route.abort()
+                    )
+                except Exception as _r_err:
+                    logger.warning(f"Could not set route filter: {_r_err}")
+                
+                await page.set_viewport_size({"width": 1366, "height": 768})
+                
+                desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+                await page.set_extra_http_headers({
+                    'Referer': 'https://www.google.com/search?q=naukri+jobs+india',
+                    'User-Agent': desktop_user_agent
+                })
+                
+                logger.info(f"Navigating to {job_url}...")
+                await page.goto(job_url, wait_until='domcontentloaded', timeout=35000)
+                await asyncio.sleep(2)
+                
+                # Sort by date on initial page load
+                await ensure_sorted_by_date(page)
+                
+                # Extract and post first job immediately
+                logger.info("Extracting first job on initial load...")
+                await extract_and_process_job(page, scraper)
+                
+                logger.info("🟢 Persistent Browser Active! Entering 60s idle loop (0.0% CPU)...")
+                
+                while True:
+                    # 60s idle sleep — CPU is strictly 0.0% during this period!
+                    await asyncio.sleep(60)
 
-            # Run scheduled job scraper
-            logger.info("Running scheduled job scraper...")
-            await extract_and_post_first_job()
-            logger.info("Scheduled scrape cycle complete — cleaning resources")
-            cleanup_zombies()
-            gc.collect()
+                    # Check 60-minute advertisement interval
+                    if time.time() - last_ad_time >= 3600:
+                        try:
+                            logger.info("Posting scheduled advertisement to channel...")
+                            send_advertisement_to_channel(telegram_token, channel_id)
+                            last_ad_time = time.time()
+                        except Exception as e:
+                            logger.error(f"Advertisement posting failed: {e}")
+
+                    # Fast reload (takes < 1 second since browser is already in memory)
+                    logger.info("⚡ Refreshing page for newest jobs...")
+                    try:
+                        await page.reload(wait_until='domcontentloaded', timeout=25000)
+                    except Exception as reload_err:
+                        logger.warning(f"Reload timed out ({reload_err}), navigating fresh...")
+                        await page.goto(job_url, wait_until='domcontentloaded', timeout=35000)
+                    
+                    await asyncio.sleep(2)
+                    
+                    # Extract and post latest job
+                    await extract_and_process_job(page, scraper)
+                    logger.info("Cycle complete. Going idle for 60s (0% CPU)...")
+                    gc.collect()
+
         except asyncio.CancelledError:
             logger.info("Scraper scheduler stopped")
             break
         except Exception as e:
-            logger.error(f"Scraper loop exception: {e}")
+            logger.error(f"Persistent browser session exception: {e}. Restarting session in 10s...")
             cleanup_zombies()
             await asyncio.sleep(10)
 
