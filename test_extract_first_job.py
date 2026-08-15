@@ -328,32 +328,132 @@ async def extract_and_post_first_job():
             
             await page.goto(job_url, wait_until='load', timeout=90000)
 
-            # The page is a React SPA — 'load' fires before React renders job cards.
-            # Explicitly wait for actual job content to appear (up to 60 seconds).
-            logger.info("Waiting for React to render job content...")
-            job_content_selectors = [
-                '.srp-jobtuple-wrapper',
-                'article.jobTupleWrapper',
-                '.jobTuple',
-                'div[data-job-id]',
-                '[class*="srp-jobtuple"]',
-                '[class*="NormalCard"]',
-                '[class*="jobTuple"]',
-                '#filter-sort',           # sort button also signals full render
-            ]
+            # ── Try Naukri's internal JSON API first (fast, no bot detection) ─────────────
+            # This bypasses the React SPA rendering delay that blocks headless Chromium
+            # on Linux/AWS servers. Falls back to browser scraping if the API fails.
+            logger.info("Trying Naukri internal API for job data...")
+            api_job = None
+            try:
+                import aiohttp
+                api_url = (
+                    "https://www.naukri.com/jobapi/v3/search"
+                    "?noOfResults=1"
+                    "&urlType=search_by_keyword"
+                    "&searchType=adv"
+                    "&keyword=it"
+                    "&pageNo=1"
+                    "&seoKey=it-jobs"
+                    "&sort=1"          # sort=1 → newest first
+                    "&src=gnbjobs_homepage_srch"
+                )
+                api_headers = {
+                    "accept":           "application/json",
+                    "appid":            "109",
+                    "systemid":         "Naukri",
+                    "user-agent":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "referer":          "https://www.naukri.com/it-jobs",
+                    "accept-language":  "en-US,en;q=0.9",
+                }
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api_url, headers=api_headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            jobs_list = data.get("jobDetails", [])
+                            if jobs_list:
+                                j = jobs_list[0]
+                                api_job = {
+                                    "title":      j.get("title", "Unknown Title"),
+                                    "company":    j.get("companyName", "Unknown Company"),
+                                    "experience": j.get("experienceText", "Not specified"),
+                                    "location":   ", ".join(j.get("placeholders", [{}])[1].get("label", "").split(",")[:2]) if len(j.get("placeholders", [])) > 1 else "Not specified",
+                                    "ctc":        j.get("salary", "NA") or "NA",
+                                    "apply_link": j.get("jdURL", "") or j.get("jobId", ""),
+                                    "skills":     [s.get("label", "") for s in j.get("tagsAndSkills", []) if s.get("label")],
+                                    "job_id":     str(j.get("jobId", "unknown")),
+                                }
+                                # Ensure apply_link is a full URL
+                                if api_job["apply_link"] and not api_job["apply_link"].startswith("http"):
+                                    api_job["apply_link"] = "https://www.naukri.com" + api_job["apply_link"]
+                                logger.info(f"API returned job: {api_job['title']} at {api_job['company']}")
+                            else:
+                                logger.warning("API returned 0 jobs — will fall back to browser scraping")
+                        else:
+                            logger.warning(f"Naukri API returned HTTP {resp.status} — will fall back to browser scraping")
+            except Exception as _api_err:
+                logger.warning(f"Naukri API call failed: {_api_err} — will fall back to browser scraping")
+
+            # ── If API returned a job, post it immediately and return ────────────────────
+            if api_job:
+                posted_urls_file = "posted_job_urls.txt"
+                if not os.path.exists(posted_urls_file):
+                    with open(posted_urls_file, "w", encoding="utf-8") as f:
+                        f.write("")
+                with open(posted_urls_file, "r", encoding="utf-8") as f:
+                    posted_urls = set(f.read().splitlines())
+
+                if api_job["apply_link"] in posted_urls:
+                    logger.info(f"API job already posted: {api_job['title']} — skipping")
+                    return
+
+                # Encrypt link and build message
+                encrypted_link = scraper.encrypt_job_url(api_job["apply_link"])
+                import re as _re
+                skills = api_job.get("skills", [])
+                if skills:
+                    hashtag_str = " ".join(
+                        "#" + _re.sub(r"[^a-zA-Z0-9]", "", s.title().replace(" ", ""))
+                        for s in skills if s
+                    )
+                else:
+                    title_words = _re.findall(r"[A-Za-z][a-zA-Z0-9]+", api_job["title"])
+                    hashtag_str = " ".join(f"#{w}" for w in title_words if len(w) > 2)
+
+                message = (
+                    f"📌 {api_job['title']}\n\n"
+                    f"🏢 Company: {api_job['company']}\n\n"
+                    f"⏳ Experience: {api_job['experience']}\n\n"
+                    f"📍 Location: {api_job['location']}\n\n"
+                    f"💰 CTC: {api_job['ctc']}\n\n"
+                    f"{hashtag_str}\n\n"
+                    f"🔗 Apply Link: {encrypted_link}"
+                )
+
+                logger.info("Attempting to send API job to Telegram")
+                result = await scraper.send_telegram_message(message, parse_mode=None)
+                if result:
+                    with open(posted_urls_file, "a", encoding="utf-8") as f:
+                        f.write(f"{api_job['apply_link']}\n")
+                    logger.info(f"✅ Posted API job to Telegram: {api_job['title']}")
+
+                    # Send to premium users
+                    channel_id = "@IT_Job_openings_Naukri"
+                    await send_job_to_matching_premium_users(
+                        api_job["title"], message, scraper.telegram_token,
+                        api_job["experience"], api_job["location"], api_job["apply_link"]
+                    )
+                    check_and_send_advertisement(scraper.telegram_token, channel_id)
+                else:
+                    logger.warning("Failed to send API job to Telegram")
+                return  # Done — no need for browser scraping
+
+            # ── Fallback: browser scraping (if API failed) ───────────────────────────────
+            # Wait for React to render with a short per-selector timeout (no more 60s hangs)
+            logger.info("Falling back to browser scraping — waiting for React to render...")
             content_loaded = False
-            for _jsel in job_content_selectors:
+            for _jsel in ['.srp-jobtuple-wrapper', 'article.jobTupleWrapper', '.jobTuple',
+                          'div[data-job-id]', '[class*="srp-jobtuple"]', '[class*="jobTuple"]', '#filter-sort']:
                 try:
-                    await page.wait_for_selector(_jsel, timeout=60000)
-                    logger.info(f"Job content rendered — found selector: {_jsel}")
+                    await page.wait_for_selector(_jsel, timeout=10000)
+                    logger.info(f"Browser: job content found with selector: {_jsel}")
                     content_loaded = True
                     break
                 except Exception:
                     pass
-
             if not content_loaded:
-                logger.warning("Job content did not appear within 60 s — adding 10 s fallback wait")
-                await asyncio.sleep(10)
+                logger.warning("Browser: job content not found after 10 s per selector — reading whatever HTML is available")
+                await asyncio.sleep(5)
+
+
 
 
             # ── Pre-sort diagnostic: save HTML + screenshot to debug Linux headless issues ──
