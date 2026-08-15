@@ -449,7 +449,31 @@ async def extract_and_post_first_job():
                 logger.error(f"Error while trying to sort by date: {str(e)}")
                 logger.info("Continuing with default sorting")
             
-            # Get page content immediately for analysis
+            # Wait for the page to fully render JS (especially important on Linux headless)
+            # Try waiting for known job-card selectors to appear in the DOM first
+            job_card_selectors_to_wait = [
+                '.srp-jobtuple-wrapper',
+                'article.jobTupleWrapper',
+                '.jobTuple',
+                'div[data-job-id]',
+                '[class*="srp-jobtuple"]',
+                '[class*="NormalCard"]',
+            ]
+            cards_appeared = False
+            for _sel in job_card_selectors_to_wait:
+                try:
+                    await page.wait_for_selector(_sel, timeout=15000)
+                    logger.info(f"Job cards appeared in DOM using selector: {_sel}")
+                    cards_appeared = True
+                    break
+                except Exception:
+                    pass
+
+            if not cards_appeared:
+                logger.warning("Job cards did not appear via wait_for_selector — waiting extra 5 s for JS render")
+                await asyncio.sleep(5)
+
+            # Get page content for analysis
             page_content = await page.content()
             with open("page_content.html", "w", encoding="utf-8") as f:
                 f.write(page_content)
@@ -463,6 +487,7 @@ async def extract_and_post_first_job():
             logger.info("Looking for the first job card after sorting by date")
             
             # Try to find job cards with various selectors (modern + legacy Naukri selectors)
+            # Broader selector list to handle different Naukri HTML structures on Linux vs Windows
             job_cards = soup.select(
                 '.srp-jobtuple-wrapper, '
                 'article.jobTupleWrapper, '
@@ -471,9 +496,35 @@ async def extract_and_post_first_job():
                 '[class*="srp-jobtuple"], '
                 '[class*="NormalCard"], '
                 'div[data-job-id], '
-                '.SRPstyle__NormalCardStyle-sc-1rnhgwh-0'
+                '.SRPstyle__NormalCardStyle-sc-1rnhgwh-0, '
+                'article[class*="job"], '
+                'li[class*="job"], '
+                'div[class*="jobTuple"], '
+                'div[class*="job-card"], '
+                'div[class*="JobCard"]'
             )
             logger.info(f"Found {len(job_cards)} potential job cards")
+
+            # If still 0 cards, try a last-resort broader search: any element containing
+            # a link to /job-listings/ or /job-detail/ that wraps a title-like heading
+            if not job_cards:
+                logger.warning("Standard selectors found 0 cards — trying last-resort link-based search")
+                # Find all <a> tags pointing to job URLs and collect their closest block-level ancestor
+                seen_ancestors = set()
+                fallback_cards = []
+                for a_tag in soup.find_all('a', href=True):
+                    href = a_tag['href']
+                    if '/job-listings' in href or '/job-detail' in href:
+                        # Walk up to find a meaningful container (div/article/li)
+                        ancestor = a_tag.find_parent(['article', 'li', 'div'])
+                        if ancestor and id(ancestor) not in seen_ancestors:
+                            seen_ancestors.add(id(ancestor))
+                            fallback_cards.append(ancestor)
+                if fallback_cards:
+                    logger.info(f"Last-resort search found {len(fallback_cards)} job-link containers")
+                    job_cards = fallback_cards
+                else:
+                    logger.warning("Last-resort search also found 0 containers")
             
             target_job = None
             
@@ -1173,13 +1224,21 @@ if __name__ == "__main__":
             logger.error(f"Advertisement posting failed: {str(e)}")
     
     # Start premium bot in a background thread so it does not block the job scraper
+    # We create a brand-new event loop for the thread because asyncio loops are
+    # thread-local and run_polling() requires one.
     logger.info("Starting premium bot in background thread...")
     try:
+        import asyncio as _asyncio
+
         def _run_bot():
+            loop = _asyncio.new_event_loop()
+            _asyncio.set_event_loop(loop)
             try:
                 run_premium_bot(PREMIUM_TOKEN)
             except Exception as e:
                 logger.error(f"Premium bot encountered error: {e}")
+            finally:
+                loop.close()
 
         bot_thread = threading.Thread(target=_run_bot, name="PremiumBotThread", daemon=True)
         bot_thread.start()
