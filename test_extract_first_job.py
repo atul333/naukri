@@ -829,10 +829,9 @@ async def extract_and_post_first_job():
                 if not ctc_clean or ctc_clean.upper() == 'NA':
                     ctc_clean = "Best in Industry / As per Norms"
                 
-                # Compact, Small, Sleek Job Card Layout (No naukri.com, no Direct Apply section, tight spacing)
+                # Compact Job Card Layout with Role at the top
                 message = (
-                    "⚡ <b>NEW TECH OPENING</b>\n\n"
-                    f"💼 <b>Role:</b> <b>{title_clean}</b>\n"
+                    f"💼 <b>Role:</b> <b>{title_clean}</b>\n\n"
                     f"🏢 <b>Company:</b> {company_clean}\n"
                     f"⏳ <b>Experience:</b> <code>{experience_clean}</code>\n"
                     f"📍 <b>Location:</b> <code>{location_clean}</code>\n"

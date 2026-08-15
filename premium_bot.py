@@ -702,8 +702,7 @@ async def test_match_preview(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     sample_job = (
         "🧪 <b>SAMPLE NOTIFICATION PREVIEW</b>\n\n"
-        "⚡ <b>NEW TECH OPENING</b>\n\n"
-        f"💼 <b>Role:</b> <b>Senior {keywords.split(',')[0].strip()} Specialist</b>\n"
+        f"💼 <b>Role:</b> <b>Senior {keywords.split(',')[0].strip()} Specialist</b>\n\n"
         "🏢 <b>Company:</b> Global Tech Solutions\n"
         f"⏳ <b>Experience:</b> <code>{exp}-8 Yrs</code>\n"
         f"📍 <b>Location:</b> <code>{loc.split(',')[0].strip()}</code>\n"

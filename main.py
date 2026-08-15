@@ -1063,10 +1063,9 @@ class NaukriJobScraper:
         if not ctc or ctc.upper() == 'NA':
             ctc = "Best in Industry / As per Norms"
         
-        # Compact, Small, Sleek Job Card Layout (No naukri.com, no Direct Apply section, tight spacing)
+        # Compact Job Card Layout with Role at the top
         message = (
-            "⚡ <b>NEW TECH OPENING</b>\n\n"
-            f"💼 <b>Role:</b> <b>{title}</b>\n"
+            f"💼 <b>Role:</b> <b>{title}</b>\n\n"
             f"🏢 <b>Company:</b> {company}\n"
             f"⏳ <b>Experience:</b> <code>{experience}</code>\n"
             f"📍 <b>Location:</b> <code>{location}</code>\n"
