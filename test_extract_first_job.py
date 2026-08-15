@@ -454,6 +454,8 @@ async def extract_and_process_job(page, scraper):
         )
         if hashtag_str:
             message += f"\n🏷️ {hashtag_str}\n"
+            
+        message += f"\n🔗 <b>Apply Link:</b> {encrypted_link}\n"
         message += "\n💡 <i>Get instant matching alerts:</i> @Premium_Naukri_bot"
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup

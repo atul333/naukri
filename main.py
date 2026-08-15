@@ -1037,6 +1037,7 @@ class NaukriJobScraper:
         if hashtags and hashtags.strip():
             message += f"\n🏷️ {hashtags.strip()}\n"
             
+        message += f"\n🔗 <b>Apply Link:</b> {encrypted_link}\n"
         message += "\n💡 <i>Get instant matching alerts:</i> @Premium_Naukri_bot"
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
