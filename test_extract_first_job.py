@@ -355,17 +355,8 @@ async def extract_and_post_first_job():
                 logger.warning("Job cards not found — page may still be loading, adding 5 s buffer")
                 await asyncio.sleep(5)
 
-            # ── Screenshot 1: after page load, before sorting ──────────────────────────
-            try:
-                from datetime import datetime as _dt
-                _ts = _dt.now().strftime("%H%M%S")
-                await page.screenshot(path=f"after_page_load_{_ts}.png", full_page=False)
-                logger.info(f"Screenshot saved: after_page_load_{_ts}.png")
-            except Exception as _se:
-                logger.warning(f"Could not save page-load screenshot: {_se}")
+            # Sort results by Date
 
-
-            # From screenshot: page shows 'Sort by: Relevance' dropdown.
             # Step 1: click the sort button to open the dropdown.
             # Step 2: click 'Date' in the dropdown.
             logger.info("Attempting to sort results by Date")
@@ -437,45 +428,9 @@ async def extract_and_post_first_job():
                 logger.error(f"Error sorting by date: {str(e)}")
                 logger.info("Continuing with default sorting")
 
-            # ── Screenshot 2: after sorting ───────────────────────────────────────────
-            try:
-                from datetime import datetime as _dt2
-                _ts2 = _dt2.now().strftime("%H%M%S")
-                await page.screenshot(path=f"after_sort_{_ts2}.png", full_page=False)
-                logger.info(f"Screenshot saved: after_sort_{_ts2}.png")
-            except Exception as _se2:
-                logger.warning(f"Could not save after-sort screenshot: {_se2}")
-
-            
-            # Wait for the page to fully render JS (especially important on Linux headless)
-            # Try waiting for known job-card selectors to appear in the DOM first
-            job_card_selectors_to_wait = [
-                '.srp-jobtuple-wrapper',
-                'article.jobTupleWrapper',
-                '.jobTuple',
-                'div[data-job-id]',
-                '[class*="srp-jobtuple"]',
-                '[class*="NormalCard"]',
-            ]
-            cards_appeared = False
-            for _sel in job_card_selectors_to_wait:
-                try:
-                    await page.wait_for_selector(_sel, timeout=15000)
-                    logger.info(f"Job cards appeared in DOM using selector: {_sel}")
-                    cards_appeared = True
-                    break
-                except Exception:
-                    pass
-
-            if not cards_appeared:
-                logger.warning("Job cards did not appear via wait_for_selector — waiting extra 5 s for JS render")
-                await asyncio.sleep(5)
-
-            # Get page content for analysis
+            # Get page content for BeautifulSoup parsing
             page_content = await page.content()
-            with open("page_content.html", "w", encoding="utf-8") as f:
-                f.write(page_content)
-            logger.info("Saved page content to page_content.html")
+
             
             # Use BeautifulSoup to extract job information directly
             from bs4 import BeautifulSoup
