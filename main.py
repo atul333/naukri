@@ -978,12 +978,9 @@ class NaukriJobScraper:
         cursor.execute("UPDATE jobs SET posted_to_telegram = 1 WHERE job_id = ?", (job_id,))
         
         conn.commit()
-        conn.close()
         
-        logger.info(f"Marked job {job_id} as posted")
-    
-    async def send_telegram_message(self, message_text, parse_mode=None):
-        """Send a message to Telegram"""
+    async def send_telegram_message(self, message_text, parse_mode=None, reply_markup=None):
+        """Send a message to Telegram with optional inline buttons"""
         if not self.telegram_token or not self.channel_id:
             logger.warning("Telegram credentials not provided, skipping message")
             return False
@@ -997,6 +994,8 @@ class NaukriJobScraper:
             }
             if parse_mode:  # Only add parse_mode if not None/empty
                 kwargs['parse_mode'] = parse_mode
+            if reply_markup:
+                kwargs['reply_markup'] = reply_markup
             message = await bot.send_message(**kwargs)
             logger.info("Sent message to Telegram")
             return True
@@ -1026,6 +1025,84 @@ class NaukriJobScraper:
         if job_url in posted_urls:
             logger.info(f"Found duplicate job URL: {job_url}")
             return True
+            
+        # Also check for similar jobs by title, company, and location
+        return False
+    
+    async def post_job_to_telegram(self, job):
+        """
+        Post extracted job details to Telegram channel with world-class HTML card layout
+        and interactive inline buttons
+        """
+        if not self.telegram_token or not self.channel_id:
+            logger.warning("Telegram credentials not provided, skipping Telegram post")
+            return False
+            
+        encrypted_link = self.encrypt_job_url(job['apply_link'])
+        
+        # Build clean hashtag string
+        skills = job.get('skills', [])
+        import re as _re
+        if skills:
+            hashtags = ' '.join(
+                '#' + _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
+                for s in skills if s
+            )
+        else:
+            title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job.get('title', ''))
+            hashtags = ' '.join([f"#{w}" for w in title_words if len(w) > 2])
+        
+        if not hashtags:
+            hashtags = f"#{job.get('category', 'IT')}Jobs #Hiring"
+        
+        title = job.get('title', 'Job Opening').strip()
+        company = job.get('company', 'Top Tech Organization').strip()
+        experience = job.get('experience', 'Not specified').strip()
+        location = job.get('location', 'Pan India / Remote').strip()
+        ctc = job.get('ctc', 'Not Disclosed').strip()
+        if not ctc or ctc.upper() == 'NA':
+            ctc = "Best in Industry / As per Norms"
+        
+        # World-Class Ultra-Modern Job Card Layout
+        message = (
+            "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
+            "⚡ <b>NEW TECH OPENING • NAUKRI.COM</b>\n"
+            "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n"
+            f"💼 <b>Role:</b> <b>{title}</b>\n"
+            f"🏢 <b>Company:</b> <b>{company}</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 <b>JOB SPECIFICATIONS:</b>\n"
+            f"⏳ <b>Experience:</b> <code>{experience}</code>\n"
+            f"📍 <b>Location:</b> <code>{location}</code>\n"
+            f"💰 <b>Salary / CTC:</b> <code>{ctc}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"\n🏷️ <b>Skills & Domains:</b>\n{hashtags}\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🚀 <b>Direct Apply:</b> <a href=\"{encrypted_link}\">Click Here to Apply on Naukri</a>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💡 <i>Get instant private alerts matching your tech stack:</i> @Premium_Naukri_bot"
+        )
+        
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        reply_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⚡ Quick Apply on Naukri", url=encrypted_link)
+            ],
+            [
+                InlineKeyboardButton("💎 Get Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
+            ]
+        ])
+        
+        try:
+            from advertisement import check_and_send_advertisement
+            result = await self.send_telegram_message(message, parse_mode='HTML', reply_markup=reply_markup)
+            if result:
+                logger.info(f"Posted job to Telegram: {job['title']}")
+                check_and_send_advertisement(self.telegram_token, self.channel_id)
+            return result
+        except Exception as e:
+            logger.error(f"Error posting to Telegram: {str(e)}")
+            return False
             
         # Also check for similar jobs by title, company, and location
         job_details_file = "job_details.json"

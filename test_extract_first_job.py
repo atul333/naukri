@@ -254,12 +254,27 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                 
                 if title_match and experience_match and location_match:
                     try:
-                        # Send personalized message to the user
-                        personalized_message = f"🔔 *Job Alert Matching Your Preferences!*\n\n{message}"
+                        # Send personalized VIP message to the user with interactive buttons
+                        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                        apply_target = job_url if (job_url and job_url.startswith('http')) else (f"https://www.naukri.com{job_url}" if job_url else "https://www.naukri.com")
+                        dm_keyboard = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("⚡ Quick Apply on Naukri", url=apply_target)],
+                            [InlineKeyboardButton("⚙️ Update VIP Preferences", url="https://t.me/Premium_Naukri_bot")]
+                        ])
+                        
+                        personalized_message = (
+                            "╔═════════════════════════════════╗\n"
+                            "🔔 <b>NEW VIP MATCHING JOB ALERT</b>\n"
+                            "╚═════════════════════════════════╝\n\n"
+                            f"🎯 <b>Match Criteria:</b> <code>{user_keywords}</code> • <code>{user_experience} Yrs</code>\n\n"
+                            f"{message}"
+                        )
                         await bot.send_message(
                             chat_id=user_id,
                             text=personalized_message,
-                            parse_mode='Markdown'
+                            parse_mode='HTML',
+                            reply_markup=dm_keyboard,
+                            disable_web_page_preview=True
                         )
                         matched_users.append(f"{user_data.get('username')} (keywords: {user_keywords}, exp: {user_experience} yrs)")
                         logger.info(f"Sent job alert to premium user {user_id} with matching keywords '{user_keywords}' and experience {user_experience} yrs")
@@ -826,21 +841,48 @@ async def extract_and_post_first_job():
                 logger.info(f"Original link: {job['apply_link']}")
                 logger.info(f"Encrypted link: {encrypted_link}")
                 
-                message = f"""
-📌 *{job['title']}*
-
-🏢 *Company:* {job['company']}
-
-⏳ *Experience:* {job['experience']}
-
-📍 *Location:* {job['location']}
-
-💰 *CTC:* {job['ctc']}
-
-{hashtag_str}
-
-🔗 *Apply Link:* {encrypted_link}
-                """
+                title_clean = job.get('title', 'Job Opening').strip()
+                company_clean = job.get('company', 'Top Tech Organization').strip()
+                experience_clean = job.get('experience', 'Not specified').strip()
+                location_clean = job.get('location', 'Pan India / Remote').strip()
+                ctc_clean = job.get('ctc', 'Not Disclosed').strip()
+                if not ctc_clean or ctc_clean.upper() == 'NA':
+                    ctc_clean = "Best in Industry / As per Norms"
+                
+                # World-Class Ultra-Modern Job Card Layout
+                message = (
+                    "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
+                    "⚡ <b>NEW TECH OPENING • NAUKRI.COM</b>\n"
+                    "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n"
+                    f"💼 <b>Role:</b> <b>{title_clean}</b>\n"
+                    f"🏢 <b>Company:</b> <b>{company_clean}</b>\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "📊 <b>JOB SPECIFICATIONS:</b>\n"
+                    f"⏳ <b>Experience:</b> <code>{experience_clean}</code>\n"
+                    f"📍 <b>Location:</b> <code>{location_clean}</code>\n"
+                    f"💰 <b>Salary / CTC:</b> <code>{ctc_clean}</code>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                )
+                
+                if hashtag_str and hashtag_str.strip():
+                    message += f"\n🏷️ <b>Skills & Domains:</b>\n{hashtag_str}\n\n"
+                    
+                message += (
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🚀 <b>Direct Apply:</b> <a href=\"{encrypted_link}\">Click Here to Apply on Naukri</a>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "💡 <i>Get instant private alerts matching your tech stack:</i> @Premium_Naukri_bot"
+                )
+                
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                job_keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("⚡ Quick Apply on Naukri", url=encrypted_link)
+                    ],
+                    [
+                        InlineKeyboardButton("💎 Get Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
+                    ]
+                ])
                 
                 # Check if this job URL has been posted before
                 posted_urls_file = "posted_job_urls.txt"
@@ -908,8 +950,8 @@ async def extract_and_post_first_job():
                 if scraper.telegram_token and scraper.channel_id:
                     try:
                         logger.info("Attempting to send message to Telegram")
-                        # Use the scraper's send_telegram_message method instead of direct bot usage
-                        result = await scraper.send_telegram_message(message, parse_mode='Markdown')
+                        # Use the scraper's send_telegram_message method with HTML formatting & inline buttons
+                        result = await scraper.send_telegram_message(message, parse_mode='HTML', reply_markup=job_keyboard)
                         if result:
                             logger.info(f"Posted job to Telegram with custom format")
                             # Add this URL to the posted URLs file
