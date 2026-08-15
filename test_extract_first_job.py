@@ -326,10 +326,35 @@ async def extract_and_post_first_job():
                 'Upgrade-Insecure-Requests': '1'
             })
             
-            await page.goto(job_url, wait_until='domcontentloaded', timeout=60000)
-            
-            # Wait for the page to load completely
-            await asyncio.sleep(15)  # Increased wait time for page to fully load
+            await page.goto(job_url, wait_until='load', timeout=90000)
+
+            # The page is a React SPA — 'load' fires before React renders job cards.
+            # Explicitly wait for actual job content to appear (up to 60 seconds).
+            logger.info("Waiting for React to render job content...")
+            job_content_selectors = [
+                '.srp-jobtuple-wrapper',
+                'article.jobTupleWrapper',
+                '.jobTuple',
+                'div[data-job-id]',
+                '[class*="srp-jobtuple"]',
+                '[class*="NormalCard"]',
+                '[class*="jobTuple"]',
+                '#filter-sort',           # sort button also signals full render
+            ]
+            content_loaded = False
+            for _jsel in job_content_selectors:
+                try:
+                    await page.wait_for_selector(_jsel, timeout=60000)
+                    logger.info(f"Job content rendered — found selector: {_jsel}")
+                    content_loaded = True
+                    break
+                except Exception:
+                    pass
+
+            if not content_loaded:
+                logger.warning("Job content did not appear within 60 s — adding 10 s fallback wait")
+                await asyncio.sleep(10)
+
 
             # ── Pre-sort diagnostic: save HTML + screenshot to debug Linux headless issues ──
             try:
