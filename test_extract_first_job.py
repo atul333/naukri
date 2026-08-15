@@ -346,40 +346,68 @@ async def extract_and_post_first_job():
             except Exception as _de:
                 logger.warning(f"Could not save pre-sort screenshot: {_de}")
 
-            # ── JS diagnostic: log what sort-related elements actually exist on the page ──
+            # ── Deep page diagnostic: understand exactly what Linux headless rendered ──────
             try:
-                sort_probe = await page.evaluate("""
+                deep_probe = await page.evaluate("""
                     () => {
-                        const results = {};
-                        // Check each expected selector
-                        const checks = {
-                            '#filter-sort':          document.querySelector('#filter-sort'),
-                            '[id*=sort]':            document.querySelector('[id*="sort"]'),
-                            'button[class*=sort]':   document.querySelector('button[class*="sort"]'),
-                            'div[class*=sort]':      document.querySelector('div[class*="sort"]'),
-                            '.sortby':               document.querySelector('.sortby'),
-                            '.sort-by':              document.querySelector('.sort-by'),
-                            '.filter-sort':          document.querySelector('.filter-sort'),
-                        };
-                        for (const [sel, el] of Object.entries(checks)) {
-                            results[sel] = el ? (el.textContent.trim().substring(0, 50) || '<no text>') : 'NOT FOUND';
-                        }
-                        // Also list any element whose text is 'Relevance' or 'Sort'
-                        const byText = Array.from(document.querySelectorAll('*'))
-                            .filter(el => {
-                                const t = (el.childNodes.length === 1 && el.firstChild.nodeType === 3)
-                                    ? el.textContent.trim() : '';
-                                return t === 'Relevance' || t === 'Sort by' || t === 'Date';
-                            })
-                            .map(el => el.tagName + '.' + el.className + ': ' + el.textContent.trim())
+                        const d = {};
+
+                        // 1. Basic page info
+                        d.title       = document.title;
+                        d.url         = window.location.href;
+                        d.totalElems  = document.querySelectorAll('*').length;
+
+                        // 2. Body text preview (first 400 chars) — reveals bot/CAPTCHA page
+                        d.bodyPreview = document.body
+                            ? document.body.innerText.trim().substring(0, 400).replace(/\\s+/g, ' ')
+                            : 'NO BODY';
+
+                        // 3. All element IDs on the page (to find sort button real ID)
+                        d.allIds = Array.from(document.querySelectorAll('[id]'))
+                            .map(el => el.id)
+                            .filter(id => id.length > 0)
+                            .slice(0, 40);
+
+                        // 4. All button elements and their text
+                        d.buttons = Array.from(document.querySelectorAll('button, [role="button"]'))
+                            .map(el => el.tagName + '#' + (el.id||'') + '.' + (el.className||'').substring(0,30)
+                                     + ' => ' + el.textContent.trim().substring(0,30))
+                            .slice(0, 20);
+
+                        // 5. Any element whose class or id contains 'sort' (case-insensitive)
+                        d.sortRelated = Array.from(document.querySelectorAll('*'))
+                            .filter(el =>
+                                (el.id && el.id.toLowerCase().includes('sort')) ||
+                                (el.className && typeof el.className === 'string' &&
+                                 el.className.toLowerCase().includes('sort'))
+                            )
+                            .map(el => el.tagName + '#' + (el.id||'') + '.' + (el.className||'').substring(0,40)
+                                     + ' => ' + el.textContent.trim().substring(0,40))
+                            .slice(0, 15);
+
+                        // 6. All h1/h2/h3 headings (reveals if it's a normal page or error page)
+                        d.headings = Array.from(document.querySelectorAll('h1,h2,h3'))
+                            .map(el => el.tagName + ': ' + el.textContent.trim().substring(0, 60))
                             .slice(0, 10);
-                        results['textMatches'] = byText;
-                        return results;
+
+                        // 7. Meta tags for bot detection clues
+                        d.metaRobots = (document.querySelector('meta[name="robots"]') || {content: 'none'}).content;
+
+                        return d;
                     }
                 """)
-                logger.info(f"Sort element probe results: {sort_probe}")
+                logger.info(f"PAGE TITLE   : {deep_probe.get('title')}")
+                logger.info(f"PAGE URL     : {deep_probe.get('url')}")
+                logger.info(f"TOTAL ELEMS  : {deep_probe.get('totalElems')}")
+                logger.info(f"META ROBOTS  : {deep_probe.get('metaRobots')}")
+                logger.info(f"BODY PREVIEW : {deep_probe.get('bodyPreview')}")
+                logger.info(f"ALL IDs      : {deep_probe.get('allIds')}")
+                logger.info(f"BUTTONS      : {deep_probe.get('buttons')}")
+                logger.info(f"SORT ELEMS   : {deep_probe.get('sortRelated')}")
+                logger.info(f"HEADINGS     : {deep_probe.get('headings')}")
             except Exception as _de:
-                logger.warning(f"Sort probe JS failed: {_de}")
+                logger.warning(f"Deep probe JS failed: {_de}")
+
 
             # ── Wait for any interactive element to confirm JS has rendered ──────────────
             page_ready = False
