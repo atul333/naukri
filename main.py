@@ -97,70 +97,56 @@ class NaukriJobScraper:
             # Get random user agent and viewport
             user_agent = self.scraper.get_random_user_agent()
             viewport = self.scraper.get_random_viewport()
-            
-            # Launch browser with enhanced stealth mode
-            browser_args = [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-infobars',
-                '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-extensions',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-site-isolation-trials',
-                '--disable-web-security',
-                '--disable-features=BlockInsecurePrivateNetworkRequests',
-                '--disable-notifications',
-                '--disable-popup-blocking',
-                '--ignore-certificate-errors',
-                '--window-size=1920,1080',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-breakpad',
-                '--disable-component-extensions-with-background-pages',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--disable-gpu',
-                '--hide-scrollbars',
-                '--mute-audio',
-                '--disable-http2'  # Force HTTP/1.1 so proxies don't break HTTP/2
-            ]
-            
-            # Set headless mode to True for Linux/production (no display needed)
-            headless_mode = True
-            
-            self.browser = await self.playwright.chromium.launch(
-                headless=headless_mode,
-                args=browser_args
+
+            # ── Use Firefox instead of Chromium ────────────────────────────────────────
+            # Naukri blocks headless Chromium on AWS via server-side fingerprinting.
+            # Firefox has a completely different TLS fingerprint and headless signature,
+            # making it much harder to detect and block.
+            # Firefox does NOT use Chromium's --flags, so we pass a minimal set.
+            logger.info("Launching Firefox (headless) to bypass Chromium bot detection...")
+            self.browser = await self.playwright.firefox.launch(
+                headless=True,
+                firefox_user_prefs={
+                    # Disable telemetry / first-run prompts
+                    "datareporting.policy.dataSubmissionPolicyAccepted": True,
+                    "datareporting.policy.dataSubmissionEnabled":        False,
+                    "toolkit.telemetry.enabled":                         False,
+                    # Set a realistic window size
+                    "browser.startup.homepage":                          "about:blank",
+                }
             )
+            logger.info("Firefox launched successfully")
+
             
-            # Configure context with enhanced stealth settings
+            # Configure context for Firefox
+            # Note: Firefox does not send Sec-Ch-Ua headers, so remove them
+            firefox_ua = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) "
+                "Gecko/20100101 Firefox/120.0"
+            )
             context_options = {
                 'viewport': viewport,
-                'user_agent': user_agent,
+                'user_agent': firefox_ua,
                 'locale': 'en-US',
                 'timezone_id': 'Asia/Kolkata',
-                'color_scheme': 'no-preference',  # Use system default
+                'color_scheme': 'no-preference',
                 'geolocation': {'latitude': 12.9716, 'longitude': 77.5946},
                 'permissions': ['geolocation'],
                 'extra_http_headers': {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Cache-Control': 'max-age=0',
-                    'Connection': 'keep-alive',
+                    'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection':      'keep-alive',
                     'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Sec-Fetch-User': '?1',
-                    'DNT': '1',
-                    'Referer': 'https://www.google.com/',
-                    'Sec-Ch-Ua': '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
-                    'Sec-Ch-Ua-Mobile': '?0',
-                    'Sec-Ch-Ua-Platform': '"Windows"'
+                    'Sec-Fetch-Dest':  'document',
+                    'Sec-Fetch-Mode':  'navigate',
+                    'Sec-Fetch-Site':  'none',
+                    'Sec-Fetch-User':  '?1',
+                    'DNT':             '1',
+                    'Referer':         'https://www.google.com/',
                 }
             }
+
             
             # Create browser context
             self.context = await self.browser.new_context(**context_options)
