@@ -522,10 +522,10 @@ async def run_single_scan(scraper, job_url):
         async with browser_cm as context:
             page = await context.new_page()
             
-            # Abort heavy assets (images, fonts, media) to cut RAM and bandwidth
+            # Abort heavy assets (images, fonts, media) to cut bandwidth while preserving scripts/APIs
             try:
                 await page.route(
-                    "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,eot,mp4,mp3,avi,wav,flv,mkv}",
+                    "**/*.{png,jpg,jpeg,gif,webp,svg,ico,mp4,mp3,avi,wav,flv,mkv}",
                     lambda route: route.abort()
                 )
             except Exception as _r_err:
@@ -540,8 +540,19 @@ async def run_single_scan(scraper, job_url):
             })
             
             logger.info(f"Navigating to {job_url}...")
-            await page.goto(job_url, wait_until='domcontentloaded', timeout=35000)
-            await asyncio.sleep(2)
+            await page.goto(job_url, wait_until='domcontentloaded', timeout=40000)
+            
+            # Wait for job card elements to appear
+            card_selectors = (
+                '.srp-jobtuple-wrapper, article.jobTupleWrapper, .jobTuple, '
+                '[class*="srp-jobtuple"], [class*="NormalCard"], div[data-job-id], '
+                'article[class*="job"], div[class*="jobTuple"]'
+            )
+            try:
+                await page.wait_for_selector(card_selectors, timeout=20000)
+                logger.info("Job card elements detected on page.")
+            except Exception:
+                logger.warning("Job cards not detected within 20s, proceeding with page content check...")
             
             # Sort by date on page load
             await ensure_sorted_by_date(page)
