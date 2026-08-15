@@ -16,5 +16,5 @@ elif [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
 fi
 
-python3 test_extract_first_job.py
+python3 -u test_extract_first_job.py
 

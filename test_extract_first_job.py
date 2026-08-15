@@ -20,12 +20,24 @@ TELEGRAM_TOKEN = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
 # Premium bot (t.me/Premium_Naukri_bot) - separate dedicated bot for user subscriptions
 PREMIUM_TOKEN = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
 
-# Configure logging
+# Enable unbuffered stdout so nohup.out prints in real-time
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+# Configure logging with automatic flushing
+class FlushingStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()
+        FlushingStreamHandler(sys.stdout)
     ]
 )
 
