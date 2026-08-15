@@ -345,16 +345,16 @@ async def prompt_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     keyboard = [
         [
-            InlineKeyboardButton("🎓 0-1 Yr (Fresher)", callback_data="exp_0"),
-            InlineKeyboardButton("🔹 1-3 Yrs (Junior)", callback_data="exp_2"),
+            InlineKeyboardButton("🎓 0-1 Yr (Fresher)", callback_data="exp_0-1"),
+            InlineKeyboardButton("🔹 1-3 Yrs (Junior)", callback_data="exp_1-3"),
         ],
         [
-            InlineKeyboardButton("🔸 3-5 Yrs (Mid)", callback_data="exp_4"),
-            InlineKeyboardButton("💼 5-8 Yrs (Senior)", callback_data="exp_6"),
+            InlineKeyboardButton("🔸 3-5 Yrs (Mid)", callback_data="exp_3-5"),
+            InlineKeyboardButton("💼 5-8 Yrs (Senior)", callback_data="exp_5-8"),
         ],
         [
-            InlineKeyboardButton("🏆 8+ Yrs (Lead)", callback_data="exp_9"),
-            InlineKeyboardButton("✍️ Custom Number", callback_data="exp_custom"),
+            InlineKeyboardButton("🏆 8+ Yrs (Lead)", callback_data="exp_8+"),
+            InlineKeyboardButton("✍️ Custom Range / Number", callback_data="exp_custom"),
         ],
         [
             InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main_menu")
@@ -362,8 +362,8 @@ async def prompt_experience(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     ]
 
     text = (
-        "⏳ <b>SELECT YOUR EXPERIENCE LEVEL</b>\n\n"
-        "Choose your total years of work experience or click 'Custom Number' to type:"
+        "⏳ <b>SELECT YOUR EXPERIENCE RANGE</b>\n\n"
+        "Choose your experience range (e.g. 5-8 Yrs) or click 'Custom Range / Number' to type:"
     )
 
     if query:
@@ -382,9 +382,9 @@ async def handle_exp_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if data == "exp_custom":
         keyboard = [[InlineKeyboardButton("🔙 Cancel", callback_data="nav_main_menu")]]
         await query.edit_message_text(
-            "⏳ <b>Enter your years of experience as a number:</b>\n\n"
-            "Examples: <code>3</code> or <code>5.5</code> or <code>8</code>\n\n"
-            "✍️ <i>Type the number in chat now:</i>",
+            "⏳ <b>Enter your experience range or number:</b>\n\n"
+            "Examples: <code>5-8</code> or <code>4</code> or <code>3-6</code>\n\n"
+            "✍️ <i>Type in chat now:</i>",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
@@ -407,7 +407,7 @@ async def handle_exp_button(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main_menu")]
     ]
     await query.edit_message_text(
-        f"✅ <b>Experience Saved:</b> <b>{exp_val} Years</b>\n\n"
+        f"✅ <b>Experience Saved:</b> <b>{exp_val} Yrs</b>\n\n"
         "👉 Next, let's select your preferred job locations.",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
@@ -433,7 +433,7 @@ async def save_experience_text(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main_menu")]
     ]
     await update.message.reply_text(
-        f"✅ <b>Experience Saved:</b> <b>{exp} Years</b>\n\n"
+        f"✅ <b>Experience Saved:</b> <b>{exp} Yrs</b>\n\n"
         "👉 Next, set your preferred job locations.",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
