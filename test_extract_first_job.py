@@ -416,7 +416,7 @@ async def extract_and_post_first_job():
                     """)
                     if clicked:
                         logger.info(f"Clicked Date sort via JS ({clicked}), waiting for page to re-sort...")
-                        await asyncio.sleep(8)
+                        await asyncio.sleep(2)
                         sorted_by_date = True
                     else:
                         logger.warning("Could not find Date sort option — continuing with current order")
