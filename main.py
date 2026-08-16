@@ -104,9 +104,29 @@ class NaukriJobScraper:
             moz_env["MOZ_HEADLESS_WIDTH"] = "1366"
             moz_env["MOZ_HEADLESS_HEIGHT"] = "768"
             
+            # ── Check for Proxy (Environment variable PROXY_URL, HTTP_PROXY, or proxies.txt) ──
+            proxy_setting = None
+            proxy_url = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+            
+            # If not in env, check proxies.txt file
+            if not proxy_url and os.path.exists("proxies.txt"):
+                try:
+                    with open("proxies.txt", "r", encoding="utf-8") as pf:
+                        lines = [line.strip() for line in pf if line.strip() and not line.startswith("#")]
+                        if lines:
+                            proxy_url = random.choice(lines)
+                except Exception as p_err:
+                    logger.warning(f"Could not read proxies.txt: {p_err}")
+            
+            if proxy_url:
+                proxy_setting = {"server": proxy_url}
+                masked_proxy = proxy_url.split("@")[-1] if "@" in proxy_url else proxy_url
+                logger.info(f"Using proxy: {masked_proxy}")
+            
             self.browser = await self.playwright.firefox.launch(
                 headless=True,
                 env=moz_env,
+                proxy=proxy_setting,
                 firefox_user_prefs={
                     # Disable telemetry & data reporting
                     "datareporting.policy.dataSubmissionPolicyAccepted": True,

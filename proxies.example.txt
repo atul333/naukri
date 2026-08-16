@@ -1,0 +1,7 @@
+# Add one proxy per line in any of the following formats:
+# http://username:password@proxy_host:proxy_port
+# http://proxy_host:proxy_port
+# socks5://username:password@proxy_host:proxy_port
+
+# Example:
+# http://user123:pass456@residential.proxyprovider.com:8000
