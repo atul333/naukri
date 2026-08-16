@@ -580,9 +580,26 @@ async def run_single_scan(scraper, job_url):
                 logger.info("Job card elements detected on page.")
             except Exception:
                 logger.warning(f"Waiting for job cards timed out. Current Title: '{await page.title()}'")
+
+            # 📸 1. Pre-sort screenshot & HTML dump
+            try:
+                await page.screenshot(path="screenshot_pre_sort.png", full_page=False)
+                logger.info("📸 Saved screenshot_pre_sort.png")
+                page_html = await page.content()
+                with open("page_debug.html", "w", encoding="utf-8") as f:
+                    f.write(page_html)
+            except Exception as ss_err:
+                logger.warning(f"Could not save pre-sort screenshot: {ss_err}")
             
             # Sort by date on page load
             await ensure_sorted_by_date(page)
+
+            # 📸 2. Post-sort screenshot
+            try:
+                await page.screenshot(path="screenshot_post_sort.png", full_page=False)
+                logger.info("📸 Saved screenshot_post_sort.png")
+            except Exception as ss_err:
+                logger.warning(f"Could not save post-sort screenshot: {ss_err}")
             
             # Extract and post latest job
             logger.info("Extracting latest job...")
