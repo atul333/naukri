@@ -391,10 +391,15 @@ async def extract_and_process_job(page, scraper):
             
         title = title_element.text.strip()
         
-        company_element = target_job.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo, [data-test="company-name"], [class*="comp"], [class*="org"], [itemprop="hiringOrganization"]')
+        company_element = target_job.select_one('.comp-name, a.comp-name, .companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .companyInfo, [data-test="company-name"], [class*="comp"], [class*="org"], [itemprop="hiringOrganization"]')
         if not company_element and target_job.parent:
-            company_element = target_job.parent.select_one('.companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .comp-name, .companyInfo')
+            company_element = target_job.parent.select_one('.comp-name, a.comp-name, .companyName, .company, [class*="company"], .subTitle, [class*="subTitle"], .companyInfo')
         company = company_element.text.strip() if company_element else "Top Tech Company"
+        # Clean ratings/reviews from company name if merged
+        company = re.split(r'\d+\.?\d*\s*Reviews|\d+\.?\d*\s*★', company)[0].strip()
+        company = re.sub(r'\d+\.?\d*$', '', company).strip()
+        if not company:
+            company = "Top Tech Company"
         
         exp_element = target_job.select_one('.experience, .exp, [class*="experience"], [class*="exp"], .expwdth, [data-test="experience"], span[class*="exp"]')
         experience = exp_element.text.strip() if exp_element else "0-5 Yrs"
@@ -541,15 +546,6 @@ async def run_single_scan(scraper, job_url):
         async with browser_cm as context:
             page = await context.new_page()
             
-            # Abort heavy assets (images, fonts, media) to cut bandwidth while preserving scripts/APIs
-            try:
-                await page.route(
-                    "**/*.{png,jpg,jpeg,gif,webp,svg,ico,mp4,mp3,avi,wav,flv,mkv}",
-                    lambda route: route.abort()
-                )
-            except Exception as _r_err:
-                logger.warning(f"Could not set route filter: {_r_err}")
-            
             await page.set_viewport_size({"width": 1366, "height": 768})
             
             desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
@@ -559,7 +555,7 @@ async def run_single_scan(scraper, job_url):
             })
             
             logger.info(f"Navigating to {job_url}...")
-            await page.goto(job_url, wait_until='domcontentloaded', timeout=40000)
+            await page.goto(job_url, wait_until='domcontentloaded', timeout=45000)
             
             # Wait for job card elements to appear
             card_selectors = (
@@ -568,10 +564,10 @@ async def run_single_scan(scraper, job_url):
                 'article[class*="job"], div[class*="jobTuple"]'
             )
             try:
-                await page.wait_for_selector(card_selectors, timeout=20000)
+                await page.wait_for_selector(card_selectors, timeout=25000)
                 logger.info("Job card elements detected on page.")
             except Exception:
-                logger.warning("Job cards not detected within 20s, proceeding with page content check...")
+                logger.warning("Job cards not detected within 25s, proceeding with page content check...")
             
             # Sort by date on page load
             await ensure_sorted_by_date(page)
@@ -600,7 +596,7 @@ async def main_scheduler():
     except Exception as e:
         logger.error(f"Startup advertisement failed: {e}")
 
-    job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch&forceDesktop=true"
+    job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch"
     scan_interval = 60  # seconds between scans
     
     while True:
