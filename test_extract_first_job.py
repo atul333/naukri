@@ -6,6 +6,8 @@ import threading
 import sys
 import re
 import time
+import random
+import gc
 from datetime import datetime
 from main import NaukriJobScraper
 from telegram import Bot
