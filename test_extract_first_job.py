@@ -535,35 +535,57 @@ async def extract_and_process_job(page, scraper):
 async def solve_recaptcha_if_present(page):
     """Detects and automatically clicks Google reCAPTCHA checkbox if present"""
     try:
-        content = await page.content()
-        is_captcha = "recaptcha" in content.lower() or "check the box to let us know you're human" in content.lower()
+        logger.info("Checking for Google reCAPTCHA challenge...")
+        captcha_found = False
         
-        if is_captcha:
-            logger.info("🤖 Google reCAPTCHA detected on page! Attempting auto-solve...")
-            await asyncio.sleep(random.uniform(1.5, 2.5))
+        # Check by frame_locator
+        recaptcha_frame = page.frame_locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]')
+        anchor = recaptcha_frame.locator('#recaptcha-anchor, .recaptcha-checkbox-border, .recaptcha-checkbox')
+        
+        try:
+            if await anchor.is_visible(timeout=5000):
+                captcha_found = True
+        except Exception:
+            pass
             
-            # Look through all child frames for the recaptcha anchor
+        if not captcha_found:
             for frame in page.frames:
                 if "recaptcha" in frame.url:
-                    for sel in ["#recaptcha-anchor", ".recaptcha-checkbox-border", ".recaptcha-checkbox"]:
-                        try:
-                            cb = await frame.query_selector(sel)
-                            if cb:
-                                logger.info(f"Found reCAPTCHA checkbox with selector '{sel}'. Clicking...")
-                                box = await cb.bounding_box()
-                                if box:
-                                    await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-                                    await asyncio.sleep(0.3)
-                                    await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-                                else:
-                                    await cb.click()
-                                logger.info("Clicked reCAPTCHA checkbox. Waiting 6s for verification...")
-                                await asyncio.sleep(6)
-                                return True
-                        except Exception:
-                            pass
+                    captcha_found = True
+                    break
+
+        if captcha_found:
+            logger.info("🤖 Google reCAPTCHA challenge detected! Simulating human click on checkbox...")
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            
+            # Click via frame locator
+            try:
+                await anchor.click(timeout=6000)
+                logger.info("✅ Clicked '#recaptcha-anchor' via frame locator.")
+            except Exception as _c_err:
+                logger.warning(f"Frame locator click failed ({_c_err}), trying frame selector...")
+                for frame in page.frames:
+                    if "recaptcha" in frame.url:
+                        cb = await frame.query_selector("#recaptcha-anchor, .recaptcha-checkbox-border, .recaptcha-checkbox")
+                        if cb:
+                            await cb.click()
+                            logger.info("✅ Clicked checkbox via direct frame selector.")
+                            break
+            
+            logger.info("Waiting 8s for reCAPTCHA verification & page reload...")
+            await asyncio.sleep(8)
+            
+            # Take post-captcha screenshot
+            try:
+                await page.screenshot(path="screenshot_post_captcha.png")
+                logger.info("📸 Saved screenshot_post_captcha.png")
+            except Exception:
+                pass
+            return True
+        else:
+            logger.info("No reCAPTCHA challenge detected.")
     except Exception as e:
-        logger.warning(f"reCAPTCHA auto-solve check error: {e}")
+        logger.warning(f"reCAPTCHA check notice: {e}")
     return False
 
 
@@ -601,7 +623,7 @@ async def run_single_scan(scraper, job_url):
             logger.info(f"Navigating to {job_url}...")
             await page.goto(job_url, wait_until='domcontentloaded', timeout=45000)
             
-            # Check and solve reCAPTCHA if present
+            # Step 3: Check for reCAPTCHA challenge
             await solve_recaptcha_if_present(page)
             
             page_title = await page.title()
@@ -614,10 +636,17 @@ async def run_single_scan(scraper, job_url):
                 'article[class*="job"], div[class*="jobTuple"]'
             )
             try:
-                await page.wait_for_selector(card_selectors, timeout=25000)
+                await page.wait_for_selector(card_selectors, timeout=20000)
                 logger.info("Job card elements detected on page.")
             except Exception:
                 logger.warning(f"Waiting for job cards timed out. Current Title: '{await page.title()}'")
+                # Retry reCAPTCHA solve in case it appeared during load
+                if await solve_recaptcha_if_present(page):
+                    try:
+                        await page.wait_for_selector(card_selectors, timeout=15000)
+                        logger.info("Job cards detected after reCAPTCHA solve!")
+                    except Exception:
+                        pass
 
             # 📸 1. Pre-sort screenshot & HTML dump
             try:
