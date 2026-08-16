@@ -532,6 +532,41 @@ async def extract_and_process_job(page, scraper):
         return False
 
 
+async def solve_recaptcha_if_present(page):
+    """Detects and automatically clicks Google reCAPTCHA checkbox if present"""
+    try:
+        content = await page.content()
+        is_captcha = "recaptcha" in content.lower() or "check the box to let us know you're human" in content.lower()
+        
+        if is_captcha:
+            logger.info("🤖 Google reCAPTCHA detected on page! Attempting auto-solve...")
+            await asyncio.sleep(random.uniform(1.5, 2.5))
+            
+            # Look through all child frames for the recaptcha anchor
+            for frame in page.frames:
+                if "recaptcha" in frame.url:
+                    for sel in ["#recaptcha-anchor", ".recaptcha-checkbox-border", ".recaptcha-checkbox"]:
+                        try:
+                            cb = await frame.query_selector(sel)
+                            if cb:
+                                logger.info(f"Found reCAPTCHA checkbox with selector '{sel}'. Clicking...")
+                                box = await cb.bounding_box()
+                                if box:
+                                    await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                                    await asyncio.sleep(0.3)
+                                    await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                                else:
+                                    await cb.click()
+                                logger.info("Clicked reCAPTCHA checkbox. Waiting 6s for verification...")
+                                await asyncio.sleep(6)
+                                return True
+                        except Exception:
+                            pass
+    except Exception as e:
+        logger.warning(f"reCAPTCHA auto-solve check error: {e}")
+    return False
+
+
 async def run_single_scan(scraper, job_url):
     """
     Opens browser ONLY when scanning is triggered, sorts by date, extracts the latest job,
@@ -565,6 +600,9 @@ async def run_single_scan(scraper, job_url):
             # Step 2: Navigate to IT Jobs search
             logger.info(f"Navigating to {job_url}...")
             await page.goto(job_url, wait_until='domcontentloaded', timeout=45000)
+            
+            # Check and solve reCAPTCHA if present
+            await solve_recaptcha_if_present(page)
             
             page_title = await page.title()
             logger.info(f"Page loaded: '{page_title}' | URL: {page.url}")

@@ -173,23 +173,39 @@ class NaukriJobScraper:
                     configurable: true
                 });
 
-                // 2. Spoof languages
+                // 2. Spoof platform to match Windows User-Agent
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Win32',
+                    configurable: true
+                });
+
+                // 3. Spoof languages
                 Object.defineProperty(navigator, 'languages', {
                     get: () => ['en-US', 'en'],
                     configurable: true
                 });
 
-                // 3. Spoof hardware concurrency
+                // 4. Spoof hardware concurrency
                 Object.defineProperty(navigator, 'hardwareConcurrency', {
                     get: () => 8,
                     configurable: true
                 });
 
-                // 4. Spoof device memory
+                // 5. Spoof device memory
                 Object.defineProperty(navigator, 'deviceMemory', {
                     get: () => 8,
                     configurable: true
                 });
+
+                // 6. Fix permissions query
+                if (window.navigator.permissions) {
+                    const origQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({ state: Notification.permission }) :
+                            origQuery(parameters)
+                    );
+                }
             """)
             
             return self.context
