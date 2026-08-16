@@ -103,9 +103,6 @@ class NaukriJobScraper:
             moz_env = os.environ.copy()
             moz_env["MOZ_HEADLESS_WIDTH"] = "1366"
             moz_env["MOZ_HEADLESS_HEIGHT"] = "768"
-            moz_env["LIBGL_ALWAYS_SOFTWARE"] = "0"
-            moz_env["MOZ_WEBRENDER"] = "0"
-            moz_env["MOZ_DISABLE_CONTENT_SANDBOX"] = "1"
             
             self.browser = await self.playwright.firefox.launch(
                 headless=True,

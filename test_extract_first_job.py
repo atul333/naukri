@@ -376,7 +376,7 @@ async def extract_and_process_job(page, scraper):
         )
         
         if not job_cards:
-            logger.warning("No job cards found on page")
+            logger.warning(f"No job cards found on page. Title: '{await page.title()}', URL: '{page.url}'")
             return False
             
         target_job = job_cards[0]
@@ -554,8 +554,20 @@ async def run_single_scan(scraper, job_url):
                 'User-Agent': desktop_user_agent
             })
             
+            # Step 1: Pre-warm session on homepage to establish Akamai / session cookies
+            logger.info("Visiting homepage to initialize session...")
+            try:
+                await page.goto("https://www.naukri.com/", wait_until='domcontentloaded', timeout=20000)
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.info(f"Homepage pre-visit: {e}")
+            
+            # Step 2: Navigate to IT Jobs search
             logger.info(f"Navigating to {job_url}...")
             await page.goto(job_url, wait_until='domcontentloaded', timeout=45000)
+            
+            page_title = await page.title()
+            logger.info(f"Page loaded: '{page_title}' | URL: {page.url}")
             
             # Wait for job card elements to appear
             card_selectors = (
@@ -567,7 +579,7 @@ async def run_single_scan(scraper, job_url):
                 await page.wait_for_selector(card_selectors, timeout=25000)
                 logger.info("Job card elements detected on page.")
             except Exception:
-                logger.warning("Job cards not detected within 25s, proceeding with page content check...")
+                logger.warning(f"Waiting for job cards timed out. Current Title: '{await page.title()}'")
             
             # Sort by date on page load
             await ensure_sorted_by_date(page)
