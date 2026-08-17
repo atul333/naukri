@@ -21,16 +21,30 @@ class ProxyManager:
         self.failed_proxies = set()
         socket.setdefaulttimeout(3)
 
+    def parse_proxy_line(self, line):
+        """Parse raw proxy lines supporting IP:PORT:USER:PASS or standard URLs"""
+        line = line.strip()
+        if not line or line.startswith("#"):
+            return None
+        parts = line.split(":")
+        if len(parts) == 4:
+            ip, port, user, password = parts
+            return f"http://{user}:{password}@{ip}:{port}"
+        if not (line.startswith("http://") or line.startswith("https://") or line.startswith("socks5://")):
+            return f"http://{line}"
+        return line
+
     def get_custom_proxy(self):
         """Check for user-supplied proxy in env or proxies.txt"""
         env_proxy = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
         if env_proxy:
-            return env_proxy.strip()
+            return self.parse_proxy_line(env_proxy)
 
         if os.path.exists("proxies.txt"):
             try:
                 with open("proxies.txt", "r", encoding="utf-8") as f:
-                    lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+                    raw_lines = [self.parse_proxy_line(line) for line in f]
+                    lines = [p for p in raw_lines if p]
                     valid_lines = [p for p in lines if p not in self.failed_proxies]
                     if not valid_lines and lines:
                         self.failed_proxies.clear()
