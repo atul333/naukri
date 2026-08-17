@@ -34,6 +34,38 @@ class ProxyManager:
             return f"http://{line}"
         return line
 
+    def to_playwright_dict(self, proxy_str):
+        """Converts a proxy string to Playwright's proxy dictionary with separate server, username, password"""
+        if not proxy_str:
+            return None
+        proxy_str = proxy_str.strip()
+        
+        # Check IP:PORT:USER:PASS format
+        parts = proxy_str.split(":")
+        if len(parts) == 4:
+            ip, port, user, pwd = parts
+            return {
+                "server": f"http://{ip}:{port}",
+                "username": user,
+                "password": pwd
+            }
+        
+        from urllib.parse import urlparse
+        if not (proxy_str.startswith("http://") or proxy_str.startswith("https://") or proxy_str.startswith("socks5://")):
+            proxy_str = "http://" + proxy_str
+            
+        parsed = urlparse(proxy_str)
+        if parsed.username and parsed.password:
+            return {
+                "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
+                "username": parsed.username,
+                "password": parsed.password
+            }
+        else:
+            return {
+                "server": f"{parsed.scheme}://{parsed.netloc}"
+            }
+
     def get_custom_proxy(self):
         """Check for user-supplied proxy in env or proxies.txt"""
         env_proxy = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
@@ -54,6 +86,13 @@ class ProxyManager:
             except Exception as e:
                 logger.warning(f"Could not read proxies.txt: {e}")
         return None
+
+    def get_working_proxy_dict(self):
+        """Returns the working proxy in Playwright dictionary format"""
+        raw_proxy = self.get_working_proxy()
+        if not raw_proxy:
+            return None
+        return self.to_playwright_dict(raw_proxy)
 
     def fetch_public_proxies(self):
         """Fetch fresh list of live elite proxies from reliable public sources"""

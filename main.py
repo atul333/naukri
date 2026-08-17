@@ -108,11 +108,11 @@ class NaukriJobScraper:
             proxy_setting = None
             try:
                 from proxy_manager import proxy_manager
-                proxy_url = proxy_manager.get_working_proxy()
-                if proxy_url:
-                    proxy_setting = {"server": proxy_url}
-                    masked = proxy_url.split("@")[-1] if "@" in proxy_url else proxy_url
-                    logger.info(f"🌐 Routing browser through proxy: {masked}")
+                proxy_setting = proxy_manager.get_working_proxy_dict()
+                if proxy_setting:
+                    server = proxy_setting.get("server", "")
+                    has_auth = "username" in proxy_setting
+                    logger.info(f"🌐 Routing browser through proxy: {server} (auth: {has_auth})")
             except Exception as _p_err:
                 logger.warning(f"Proxy setup note: {_p_err}")
             
