@@ -34,10 +34,10 @@ def main():
     Main function to run the advertisement scheduler
     """
     logger.info("Starting advertisement scheduler")
-    logger.info(f"Advertisements will be posted every 1 minute to {CHANNEL_ID}")
+    logger.info(f"Advertisements will be posted every 12 hours to {CHANNEL_ID}")
     
-    # Schedule advertisement posting every 1 minute
-    schedule.every(60).minutes.do(post_advertisement)
+    # Schedule advertisement posting every 12 hours
+    schedule.every(12).hours.do(post_advertisement)
     
     # Post one advertisement immediately on startup
     post_advertisement()

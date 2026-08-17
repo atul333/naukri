@@ -128,13 +128,14 @@ Whether you're targeting <b>Remote</b>, <b>Bengaluru</b>, <b>Pune</b>, <b>Hydera
 
 # All available creative templates
 AD_TEMPLATES = [
+    get_ad_personalized_engine,
     get_ad_vip_radar,
     get_ad_first_mover,
-    get_ad_personalized_engine,
     get_ad_career_booster,
     get_ad_tech_talent
 ]
 
+_CURRENT_AD_INDEX = 0
 
 def build_ad_keyboard():
     """Creates high-visibility interactive inline CTA buttons"""
@@ -154,12 +155,14 @@ def build_ad_keyboard():
 
 def send_advertisement_to_channel(telegram_token, channel_id):
     """
-    Sends a randomly chosen advanced advertisement message with interactive
-    inline buttons to the specified Telegram channel.
+    Sends an advanced advertisement message with interactive inline buttons to the channel.
+    Cycles through all ad templates every time it is triggered.
     """
+    global _CURRENT_AD_INDEX
     try:
-        # Pick random template
-        ad_func = random.choice(AD_TEMPLATES)
+        # Pick and rotate through all ad templates
+        ad_func = AD_TEMPLATES[_CURRENT_AD_INDEX % len(AD_TEMPLATES)]
+        _CURRENT_AD_INDEX += 1
         ad_message = ad_func()
         reply_markup = build_ad_keyboard()
 

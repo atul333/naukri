@@ -680,10 +680,10 @@ async def main_scheduler():
             await run_single_scan(scraper, job_url)
             gc.collect()
 
-            # 2. Check scheduled advertisement interval (every 60 mins)
-            if time.time() - last_ad_time >= 3600:
+            # 2. Check scheduled advertisement interval (every 12 hours / 43200 seconds)
+            if time.time() - last_ad_time >= 12 * 3600:
                 try:
-                    logger.info("Posting scheduled advertisement to channel...")
+                    logger.info("Posting 12-hour scheduled advertisement to channel...")
                     send_advertisement_to_channel(telegram_token, channel_id)
                     last_ad_time = time.time()
                 except Exception as e:
