@@ -96,12 +96,15 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
         
         logger.info(f"Found {len(premium_users)} premium users to check for matching")
         
-        # Create bot instance
-        bot = Bot(token=telegram_token)
+        # Create bot instance using PREMIUM_TOKEN (so DMs are delivered from @Premium_Naukri_bot)
+        bot_token = PREMIUM_TOKEN if PREMIUM_TOKEN else telegram_token
+        bot = Bot(token=bot_token)
         
-        # Convert job title to lowercase for case-insensitive matching
-        job_title_lower = job_title.lower()
-        logger.info(f"Job title (lowercase): '{job_title_lower}'")
+        # Clean job title for matching
+        import re
+        job_title_lower = (job_title or "").lower()
+        clean_title = re.sub(r'[^a-zA-Z0-9\s\.\#\+\-]', ' ', job_title_lower)
+        title_tokens = [w.strip() for w in clean_title.split() if len(w.strip()) >= 2]
         
         # Helper function to parse any experience string or range
         def parse_exp_range(exp_str):
@@ -125,132 +128,79 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
         
         # Parse job experience range
         min_exp, max_exp = parse_exp_range(job_experience)
-        logger.info(f"Final job experience range: {min_exp}-{max_exp} years (from '{job_experience}')")
+        logger.info(f"Job experience range: {min_exp}-{max_exp} yrs (from '{job_experience}')")
+        
+        # Load stored hashtags from job_details.json if available
+        job_details_file = "job_details.json"
+        stored_hashtags = []
+        if os.path.exists(job_details_file):
+            try:
+                with open(job_details_file, 'r', encoding='utf-8') as f:
+                    all_job_details = json.load(f)
+                    job_info = all_job_details.get(job_url, {})
+                    if not job_info and job_title:
+                        for url, details in all_job_details.items():
+                            if details.get("title") == job_title:
+                                job_info = details
+                                break
+                    stored_hashtags = job_info.get("hashtags", [])
+            except Exception:
+                pass
+
+        clean_tags = [t.lower().replace('#', '').strip() for t in stored_hashtags]
+        job_loc_lower = (job_location or "").lower()
         
         # Track matched users for logging
         matched_users = []
         
         # Check each premium user
         for user_id, user_data in premium_users.items():
-            # Only consider premium users
             if user_data.get("is_premium", False):
-                # Get user's preferred job keywords, experience, and location
                 preferences = user_data.get("preferences", {})
                 user_keywords = preferences.get("job_keywords", "").lower()
                 user_experience = preferences.get("experience", "0")
                 user_location = preferences.get("location", "").lower()
                 
-                # Skip if user hasn't set any keywords
                 if not user_keywords:
                     continue
                 
-                # Parse user experience range
                 user_min_exp, user_max_exp = parse_exp_range(user_experience)
+                keywords_list = [k.strip().lower() for k in user_keywords.split(',') if k.strip()]
                 
-                # Split user keywords by comma
-                keywords_list = [k.strip() for k in user_keywords.split(',') if k.strip()]
+                # 1. Keyword & Tag Matching
+                matching_keywords = []
+                for kw in keywords_list:
+                    # Check substring in cleaned title
+                    if kw in clean_title or kw in job_title_lower:
+                        matching_keywords.append(kw)
+                    # Check tags
+                    elif any(kw in tag or tag in kw for tag in clean_tags):
+                        matching_keywords.append(kw)
+                    # Check word tokens
+                    elif any(kw == tok or tok.startswith(kw) for tok in title_tokens):
+                        matching_keywords.append(kw)
                 
-                # Check if any of the user's keywords match the job title or hashtags
-                logger.info(f"Checking user {user_id} with preferences: keywords='{user_keywords}', experience range={user_min_exp}-{user_max_exp} yrs, location='{user_location}'")
+                title_match = bool(matching_keywords)
                 
-                # Check if any keyword is in the job title
-                title_match_full = any(keyword in job_title_lower for keyword in keywords_list)
-                
-                # Check if any keyword matches the beginning of a word in the job title
-                words_in_job_title = job_title_lower.split()
-                title_match_word = any(word.startswith(keyword) for keyword in keywords_list for word in words_in_job_title)
-                
-                # Extract hashtags from job details if available
-                job_details_file = "job_details.json"
-                job_details = {}
-                
-                # Try to load job details for the current job URL
-                if os.path.exists(job_details_file):
-                    try:
-                        with open(job_details_file, 'r', encoding='utf-8') as f:
-                            all_job_details = json.load(f)
-                            job_details = all_job_details.get(job_url, {})
-                            if not job_details and job_title:
-                                for url, details in all_job_details.items():
-                                    if details.get("title") == job_title:
-                                        job_details = details
-                                        break
-                    except Exception as e:
-                        logger.error(f"Error loading job details: {e}")
-                
-                # Get stored hashtags from job_details if available
-                stored_hashtags = job_details.get("hashtags", [])
-                logger.info(f"Job details found: {bool(job_details)}, Job URL: {job_url}, Title: {job_title}")
-                
-                matching_hashtags = []
-                hashtags_match = False
-                
-                # Only use stored hashtags from job_details.json for matching
-                if stored_hashtags:
-                    for keyword in keywords_list:
-                        keyword = keyword.lower().strip()
-                        for tag in stored_hashtags:
-                            tag_clean = tag.lower().replace('#', '').strip()
-                            if keyword in tag_clean or tag_clean in keyword:
-                                hashtags_match = True
-                                matching_hashtags.append(tag)
-                # If no stored hashtags, generate from job title
-                else:
-                    logger.info(f"  - No stored hashtags found, generating from job title")
-                    generated_hashtags = [word.lower() for word in words_in_job_title if len(word) > 2]
-                    # Add skills commonly associated with job titles
-                    if "developer" in job_title_lower or "engineer" in job_title_lower:
-                        generated_hashtags.extend(["programming", "coding", "development", "software"])
-                    if "full" in job_title_lower and "stack" in job_title_lower:
-                        generated_hashtags.extend(["frontend", "backend", "fullstack", "javascript", "react", "node"])
-                    if "devops" in job_title_lower:
-                        generated_hashtags.extend(["aws", "kubernetes", "docker", "terraform", "ansible", "cicd"])
-                    if "data" in job_title_lower:
-                        generated_hashtags.extend(["analytics", "bigdata", "python", "sql", "database"])
-                    
-                    # Match against generated hashtags
-                    for keyword in keywords_list:
-                        keyword = keyword.lower().strip()
-                        for tag in generated_hashtags:
-                            if keyword in tag or tag in keyword:
-                                hashtags_match = True
-                                matching_hashtags.append(tag)
-                
-                logger.info(f"  - Words in job title: {words_in_job_title}")
-                logger.info(f"  - Stored hashtags: {stored_hashtags}")
-                logger.info(f"  - Matching hashtags: {matching_hashtags}")
-                logger.info(f"  - Hashtag match: {hashtags_match}")
-                
-                # Use any matching method
-                title_match = title_match_full or title_match_word or hashtags_match
-                
-                # Range overlap check: user experience range overlaps with job experience range
+                # 2. Experience Overlap Match
                 experience_match = (user_min_exp <= max_exp) and (user_max_exp >= min_exp)
                 
-                # Check for location match
-                location_match = True  # Default to True if user hasn't specified a location
-                if user_location and job_location:
-                    # Convert job location to lowercase for case-insensitive matching
-                    job_location_lower = job_location.lower()
-                    # Check if user's location is in the job location
-                    location_match = (user_location in job_location_lower) or ("remote" in user_location) or ("any" in user_location)
-                    logger.info(f"  - Job location: '{job_location_lower}'")
-                    logger.info(f"  - User location preference: '{user_location}'")
-                    logger.info(f"  - Location match: {location_match}")
+                # 3. Multi-Location Matching
+                user_loc_list = [l.strip().lower() for l in user_location.split(',') if l.strip()]
+                if not user_loc_list or "any" in user_loc_list or "all" in user_loc_list or "india" in user_loc_list:
+                    location_match = True
+                elif not job_loc_lower:
+                    location_match = True
+                elif "remote" in job_loc_lower and any("remote" in u for u in user_loc_list):
+                    location_match = True
+                else:
+                    location_match = any(u_loc in job_loc_lower or job_loc_lower in u_loc for u_loc in user_loc_list)
                 
-                # Add comprehensive debug logging
-                logger.info(f"MATCH DETAILS for user {user_id}:")
-                logger.info(f"  - Job title: '{job_title_lower}'")
-                logger.info(f"  - User keywords: '{user_keywords}'")
-                logger.info(f"  - Title match: {title_match}")
-                logger.info(f"  - User experience range: {user_min_exp}-{user_max_exp} years")
-                logger.info(f"  - Job experience range: {min_exp}-{max_exp} years")
-                logger.info(f"  - Experience overlap match: {experience_match}")
-                logger.info(f"  - OVERALL MATCH: {title_match and experience_match and location_match}")
+                # Debug log
+                logger.info(f"Checking user {user_id}: kw_match={title_match} ({matching_keywords}), exp_match={experience_match} ({user_min_exp}-{user_max_exp} vs {min_exp}-{max_exp}), loc_match={location_match}")
                 
                 if title_match and experience_match and location_match:
                     try:
-                        # Send personalized VIP message to the user with interactive buttons
                         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                         apply_target = job_url if (job_url and job_url.startswith('http')) else (f"https://www.naukri.com{job_url}" if job_url else "https://www.naukri.com")
                         dm_keyboard = InlineKeyboardMarkup([
@@ -258,9 +208,10 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                             [InlineKeyboardButton("⚙️ VIP Preferences", url="https://t.me/Premium_Naukri_bot")]
                         ])
                         
+                        matched_kw_text = ", ".join(matching_keywords)
                         personalized_message = (
-                            "🔔 <b>NEW MATCHING JOB ALERT</b>\n"
-                            f"🎯 <code>{user_keywords}</code> • <code>{user_experience} Yrs</code>\n\n"
+                            "🔔 <b>NEW VIP MATCHING JOB ALERT</b>\n"
+                            f"🎯 <b>Matched Skills:</b> <code>{matched_kw_text}</code> • <code>{user_experience} Yrs</code>\n\n"
                             f"{message}"
                         )
                         await bot.send_message(
@@ -270,15 +221,16 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                             reply_markup=dm_keyboard,
                             disable_web_page_preview=True
                         )
-                        matched_users.append(f"{user_data.get('username')} (keywords: {user_keywords}, exp: {user_experience} yrs)")
-                        logger.info(f"Sent job alert to premium user {user_id} with matching keywords '{user_keywords}' and experience {user_experience} yrs")
+                        username = user_data.get('username') or str(user_id)
+                        matched_users.append(f"{username} (skills: {matched_kw_text})")
+                        logger.info(f"✅ Sent VIP alert to premium user {user_id} ({username})")
                     except Exception as e:
-                        logger.error(f"Failed to send job alert to user {user_id}: {str(e)}")
+                        logger.error(f"Failed to send VIP alert to user {user_id}: {str(e)}")
         
         if matched_users:
-            logger.info(f"Job post '{job_title}' ({job_experience}) matched and sent to {len(matched_users)} premium users: {', '.join(matched_users)}")
+            logger.info(f"🎉 Job '{job_title}' matched and delivered to {len(matched_users)} VIP users: {', '.join(matched_users)}")
         else:
-            logger.info(f"No premium users with matching job titles and experience for '{job_title}' ({job_experience})")
+            logger.info(f"No premium users matched all criteria for '{job_title}' ({job_experience})")
             
     except Exception as e:
         logger.error(f"Error in send_job_to_matching_premium_users: {str(e)}")
