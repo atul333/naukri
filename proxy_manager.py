@@ -78,19 +78,19 @@ class ProxyManager:
         return proxies
 
     def is_proxy_working(self, proxy_url, timeout=3):
-        """Quickly test proxy connectivity to ensure fast browser startup"""
+        """Test if proxy can establish HTTPS TLS tunnels to prevent NS_ERROR_NET_RESET"""
         try:
             handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
             opener = urllib.request.build_opener(handler)
-            req = urllib.request.Request("http://httpbin.org/ip", headers={"User-Agent": "Mozilla/5.0"})
+            req = urllib.request.Request("https://httpbin.org/ip", headers={"User-Agent": "Mozilla/5.0"})
             with opener.open(req, timeout=timeout) as resp:
                 return resp.status in (200, 301, 302, 204)
         except Exception:
             return False
 
-    def get_working_proxy(self, max_trials=6):
-        """Returns a verified working proxy"""
-        # 1. Custom proxy check first
+    def get_working_proxy(self, max_trials=8):
+        """Returns a verified working proxy, or None if no healthy proxy is available"""
+        # 1. Custom proxy check first (from env or proxies.txt)
         custom = self.get_custom_proxy()
         if custom:
             masked = custom.split("@")[-1] if "@" in custom else custom
@@ -100,7 +100,6 @@ class ProxyManager:
         # 2. Check public pool
         proxies = self.fetch_public_proxies()
         if not proxies:
-            logger.warning("No public proxies available")
             return None
 
         candidates = [p for p in proxies if p not in self.failed_proxies]
@@ -111,17 +110,15 @@ class ProxyManager:
         trials = min(max_trials, len(candidates))
         test_batch = random.sample(candidates, trials)
 
-        logger.info(f"Testing {len(test_batch)} proxies for fast connection...")
+        logger.info(f"Testing {len(test_batch)} public proxies for HTTPS connectivity...")
         for p in test_batch:
             if self.is_proxy_working(p, timeout=3):
-                logger.info(f"✅ Found active proxy: {p}")
+                logger.info(f"✅ Found active HTTPS proxy: {p}")
                 return p
             else:
                 self.failed_proxies.add(p)
 
-        logger.warning("No tested proxy responded in 3s, proceeding with next best candidate")
-        if candidates:
-            return random.choice(candidates)
+        logger.info("No public proxy passed HTTPS health check; running directly")
         return None
 
     def mark_failed(self, proxy_url):
