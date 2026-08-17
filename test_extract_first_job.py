@@ -66,22 +66,13 @@ try:
 except Exception as env_err:
     logger.warning(f"Failed to initialize safe temp/browsers paths: {env_err}")
 
-async def send_job_to_matching_premium_users(job_title, message, telegram_token, job_experience=None, job_location=None, job_url=None):
+async def send_job_to_matching_premium_users(job_title, message, telegram_token, job_experience=None, job_location=None, job_url=None, all_hashtags=None, all_skills=None):
     """
-    Send job posts to premium users whose job title partially matches the post title,
+    Send job posts to premium users whose keywords match the post title or ANY extracted hashtags/skills,
     whose experience falls within the job post's experience range,
-    and whose location preference matches the job location
-    
-    Args:
-        job_title (str): The title of the job post
-        message (str): The formatted job post message
-        telegram_token (str): Telegram bot token
-        job_experience (str, optional): The experience range from the job post (e.g., "4-9 Yrs")
-        job_location (str, optional): The location of the job post
-        job_url (str, optional): The URL of the job post
+    and whose location preference matches the job location.
     """
     try:
-        # Add detailed debug logs for the job post
         logger.info("="*50)
         logger.info(f"PROCESSING JOB POST FOR MATCHING")
         logger.info(f"Job Title: '{job_title}'")
@@ -106,6 +97,41 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
         clean_title = re.sub(r'[^a-zA-Z0-9\s\.\#\+\-]', ' ', job_title_lower)
         title_tokens = [w.strip() for w in clean_title.split() if len(w.strip()) >= 2]
         
+        # Collect ALL hashtags and skills without '#' for filtering
+        matchable_tags = set()
+        if all_hashtags:
+            for t in all_hashtags:
+                clean_t = re.sub(r'[^a-zA-Z0-9]', '', t).lower().strip()
+                if clean_t:
+                    matchable_tags.add(clean_t)
+        if all_skills:
+            for s in all_skills:
+                clean_s = s.lower().strip()
+                if clean_s:
+                    matchable_tags.add(clean_s)
+                    matchable_tags.add(re.sub(r'[^a-zA-Z0-9]', '', clean_s))
+
+        # Fallback to job_details.json if not passed directly
+        if not matchable_tags and os.path.exists("job_details.json"):
+            try:
+                with open("job_details.json", "r", encoding="utf-8") as f:
+                    all_details = json.load(f)
+                    job_info = all_details.get(job_url, {})
+                    if not job_info and job_title:
+                        for u, d in all_details.items():
+                            if d.get("title") == job_title:
+                                job_info = d
+                                break
+                    for t in (job_info.get("all_hashtags") or job_info.get("hashtags") or []):
+                        matchable_tags.add(re.sub(r'[^a-zA-Z0-9]', '', t).lower().strip())
+                    for s in job_info.get("skills", []):
+                        matchable_tags.add(s.lower().strip())
+                        matchable_tags.add(re.sub(r'[^a-zA-Z0-9]', '', s.lower().strip()))
+            except Exception:
+                pass
+
+        logger.info(f"Matchable skills/tags count: {len(matchable_tags)} -> {list(matchable_tags)[:8]}")
+        
         # Helper function to parse any experience string or range
         def parse_exp_range(exp_str):
             if not exp_str:
@@ -129,25 +155,6 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
         # Parse job experience range
         min_exp, max_exp = parse_exp_range(job_experience)
         logger.info(f"Job experience range: {min_exp}-{max_exp} yrs (from '{job_experience}')")
-        
-        # Load stored hashtags from job_details.json if available
-        job_details_file = "job_details.json"
-        stored_hashtags = []
-        if os.path.exists(job_details_file):
-            try:
-                with open(job_details_file, 'r', encoding='utf-8') as f:
-                    all_job_details = json.load(f)
-                    job_info = all_job_details.get(job_url, {})
-                    if not job_info and job_title:
-                        for url, details in all_job_details.items():
-                            if details.get("title") == job_title:
-                                job_info = details
-                                break
-                    stored_hashtags = job_info.get("hashtags", [])
-            except Exception:
-                pass
-
-        clean_tags = [t.lower().replace('#', '').strip() for t in stored_hashtags]
         job_loc_lower = (job_location or "").lower()
         
         # Track matched users for logging
@@ -167,16 +174,17 @@ async def send_job_to_matching_premium_users(job_title, message, telegram_token,
                 user_min_exp, user_max_exp = parse_exp_range(user_experience)
                 keywords_list = [k.strip().lower() for k in user_keywords.split(',') if k.strip()]
                 
-                # 1. Keyword & Tag Matching
+                # 1. Keyword & All-Tags Matching
                 matching_keywords = []
                 for kw in keywords_list:
-                    # Check substring in cleaned title
+                    kw_clean = re.sub(r'[^a-zA-Z0-9]', '', kw).lower()
+                    # Check in title
                     if kw in clean_title or kw in job_title_lower:
                         matching_keywords.append(kw)
-                    # Check tags
-                    elif any(kw in tag or tag in kw for tag in clean_tags):
+                    # Check in ALL extracted hashtags and skills (with '#' stripped)
+                    elif any(kw == tag or kw_clean == tag or kw in tag or tag in kw for tag in matchable_tags if len(tag) >= 2):
                         matching_keywords.append(kw)
-                    # Check word tokens
+                    # Check in word tokens
                     elif any(kw == tok or tok.startswith(kw) for tok in title_tokens):
                         matching_keywords.append(kw)
                 
@@ -383,31 +391,29 @@ async def extract_and_process_job(page, scraper):
             
         encrypted_link = scraper.encrypt_job_link(job_url) if job_url else "https://www.naukri.com"
         
-        # Extract skills & generate hashtags (Max 3 hashtags)
-        skill_tags = target_job.select('.tag-li, .tags-gt li, [class*="tag"], [class*="skill"], .dot-gt')
-        extracted_skills = []
+        # Extract ALL skills & generate hashtags (Show max 3 in post, use ALL for VIP filter matching)
+        skill_tags = target_job.select('.tag-li, .tags-gt li, [class*="tag"], [class*="skill"], .dot-gt, .has-descriptions li')
+        all_skills = []
         for st in skill_tags:
             t = st.text.strip()
-            if t and len(t) > 1 and len(t) < 30:
-                extracted_skills.append(t)
+            if t and len(t) > 1 and len(t) < 40 and t not in all_skills:
+                all_skills.append(t)
         
-        hashtag_list = []
-        for s in extracted_skills:
+        # Build ALL hashtags for keyword matching
+        all_hashtags = []
+        for s in all_skills:
             tag = re.sub(r'[^a-zA-Z0-9]', '', s)
-            if tag:
-                hashtag_list.append(f"#{tag}")
-            if len(hashtag_list) >= 3:
-                break
+            if tag and f"#{tag}" not in all_hashtags:
+                all_hashtags.append(f"#{tag}")
         
-        if not hashtag_list:
+        if not all_hashtags:
             words = [w for w in re.split(r'[^a-zA-Z0-9]', title_clean) if len(w) > 2]
             for w in words:
-                hashtag_list.append(f"#{w}")
-                if len(hashtag_list) >= 3:
-                    break
+                all_hashtags.append(f"#{w}")
                 
-        hashtag_list = hashtag_list[:3]
-        hashtag_str = " ".join(hashtag_list)
+        # Display ONLY max 3 hashtags in Telegram channel message
+        display_hashtags = all_hashtags[:3]
+        hashtag_str = " ".join(display_hashtags)
         
         message = (
             f"💼 <b>Role:</b> <b>{title_clean}</b>\n\n"
@@ -463,7 +469,9 @@ async def extract_and_process_job(page, scraper):
             "location": location_clean,
             "experience": experience_clean,
             "posted_date": posted_date,
-            "hashtags": hashtag_list,
+            "hashtags": display_hashtags,
+            "all_hashtags": all_hashtags,
+            "skills": all_skills,
             "timestamp": datetime.now().isoformat()
         }
         with open(job_details_file, "w", encoding="utf-8") as f:
@@ -478,8 +486,11 @@ async def extract_and_process_job(page, scraper):
                 with open(posted_urls_file, "a", encoding="utf-8") as f:
                     f.write(f"{job_url}\n")
                     
-        # Send to matching premium VIP users
-        await send_job_to_matching_premium_users(title_clean, message, scraper.telegram_token, experience_clean, location_clean, job_url)
+        # Send to matching premium VIP users (passes all extracted hashtags and skills)
+        await send_job_to_matching_premium_users(
+            title_clean, message, scraper.telegram_token, experience_clean,
+            location_clean, job_url, all_hashtags=all_hashtags, all_skills=all_skills
+        )
         return True
     except Exception as e:
         logger.error(f"Error in extract_and_process_job: {e}")
