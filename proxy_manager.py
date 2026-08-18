@@ -10,23 +10,54 @@ class ProxyManager:
     """
     Manages Webshare proxies integrated directly via requests:
     - Tests connectivity using requests.get('https://ipv4.webshare.io/', proxies={...})
-    - Automatically falls back to direct connection if Webshare proxy is unavailable or unpaid (402)
+    - Rotates through 40 active Webshare proxies
+    - Automatically falls back to direct connection if Webshare proxy is unavailable
     """
     def __init__(self):
         self.failed_proxies = set()
         self.current_proxy = None
-        # Integrated Webshare proxy endpoints
+        # 40 Active Webshare Proxies
         self.webshare_proxies = [
-            "http://befjoeuj:3zyfgk068k6r@31.59.20.176:6754/",
-            "http://befjoeuj:3zyfgk068k6r@31.56.127.193:7684/",
-            "http://befjoeuj:3zyfgk068k6r@45.38.107.97:6014/",
-            "http://befjoeuj:3zyfgk068k6r@198.105.121.200:6462/",
-            "http://befjoeuj:3zyfgk068k6r@64.137.96.74:6641/",
-            "http://befjoeuj:3zyfgk068k6r@198.23.243.226:6361/",
-            "http://befjoeuj:3zyfgk068k6r@38.154.185.97:6370/",
-            "http://befjoeuj:3zyfgk068k6r@84.247.60.125:6095/",
-            "http://befjoeuj:3zyfgk068k6r@142.111.67.146:5611/",
-            "http://befjoeuj:3zyfgk068k6r@191.96.254.138:6185/"
+            "http://befjoeuj:3zyfgk068k6r@94.177.49.59:6075/",
+            "http://befjoeuj:3zyfgk068k6r@140.233.166.18:7051/",
+            "http://befjoeuj:3zyfgk068k6r@152.232.4.41:8212/",
+            "http://befjoeuj:3zyfgk068k6r@185.72.242.229:5912/",
+            "http://befjoeuj:3zyfgk068k6r@213.169.215.184:5324/",
+            "http://befjoeuj:3zyfgk068k6r@107.175.55.44:6985/",
+            "http://befjoeuj:3zyfgk068k6r@148.135.191.70:5629/",
+            "http://befjoeuj:3zyfgk068k6r@173.211.8.250:6362/",
+            "http://befjoeuj:3zyfgk068k6r@23.94.138.153:6427/",
+            "http://befjoeuj:3zyfgk068k6r@46.202.227.253:8260/",
+            "http://befjoeuj:3zyfgk068k6r@89.45.125.85:5811/",
+            "http://befjoeuj:3zyfgk068k6r@104.143.244.174:6122/",
+            "http://befjoeuj:3zyfgk068k6r@104.252.49.231:6167/",
+            "http://befjoeuj:3zyfgk068k6r@206.206.71.7:5647/",
+            "http://befjoeuj:3zyfgk068k6r@148.135.188.196:7228/",
+            "http://befjoeuj:3zyfgk068k6r@166.88.169.128:6735/",
+            "http://befjoeuj:3zyfgk068k6r@181.214.6.172:5357/",
+            "http://befjoeuj:3zyfgk068k6r@193.187.115.153:5668/",
+            "http://befjoeuj:3zyfgk068k6r@23.27.210.252:6622/",
+            "http://befjoeuj:3zyfgk068k6r@45.38.94.206:6127/",
+            "http://befjoeuj:3zyfgk068k6r@46.202.227.94:8101/",
+            "http://befjoeuj:3zyfgk068k6r@104.239.107.44:5696/",
+            "http://befjoeuj:3zyfgk068k6r@142.111.192.29:5625/",
+            "http://befjoeuj:3zyfgk068k6r@82.29.224.80:7910/",
+            "http://befjoeuj:3zyfgk068k6r@107.174.215.52:7993/",
+            "http://befjoeuj:3zyfgk068k6r@209.242.204.12:5753/",
+            "http://befjoeuj:3zyfgk068k6r@104.252.41.62:6999/",
+            "http://befjoeuj:3zyfgk068k6r@64.137.121.134:6389/",
+            "http://befjoeuj:3zyfgk068k6r@108.165.205.115:5352/",
+            "http://befjoeuj:3zyfgk068k6r@173.0.9.53:5636/",
+            "http://befjoeuj:3zyfgk068k6r@185.48.55.21:6497/",
+            "http://befjoeuj:3zyfgk068k6r@31.57.42.239:6509/",
+            "http://befjoeuj:3zyfgk068k6r@212.42.199.174:5913/",
+            "http://befjoeuj:3zyfgk068k6r@23.27.78.162:5742/",
+            "http://befjoeuj:3zyfgk068k6r@46.203.159.161:6762/",
+            "http://befjoeuj:3zyfgk068k6r@82.26.212.12:5819/",
+            "http://befjoeuj:3zyfgk068k6r@45.39.13.111:5548/",
+            "http://befjoeuj:3zyfgk068k6r@172.120.112.39:5718/",
+            "http://befjoeuj:3zyfgk068k6r@193.239.176.213:5619/",
+            "http://befjoeuj:3zyfgk068k6r@104.239.44.173:6095/"
         ]
 
     def to_playwright_dict(self, proxy_str):
