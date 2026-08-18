@@ -616,6 +616,11 @@ async def run_single_scan(scraper, job_url):
             
     except Exception as e:
         logger.error(f"Error during scan: {e}")
+        try:
+            from proxy_manager import proxy_manager
+            proxy_manager.mark_failed()
+        except Exception:
+            pass
     finally:
         logger.info("🔒 [SCAN COMPLETED] Browser closed and memory released.")
 

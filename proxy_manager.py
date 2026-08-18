@@ -1,51 +1,39 @@
 import os
 import random
 import logging
-import urllib.request
-import socket
-import time
+import requests
+from urllib.parse import urlparse
 
 logger = logging.getLogger("proxy_manager")
 
 class ProxyManager:
     """
-    Manages proxies with automatic fallback:
-    1. Custom proxy from environment (PROXY_URL)
-    2. Custom proxies from proxies.txt
-    3. Auto-fetched high-speed HTTP/HTTPS proxies
+    Manages Webshare proxies integrated directly via requests:
+    - Tests connectivity using requests.get('https://ipv4.webshare.io/', proxies={...})
+    - Automatically falls back to direct connection if Webshare proxy is unavailable or unpaid (402)
     """
     def __init__(self):
-        self.cached_proxies = []
-        self.last_fetch_time = 0
-        self.fetch_cooldown = 600  # 10 minutes
         self.failed_proxies = set()
-        socket.setdefaulttimeout(3)
+        self.current_proxy = None
+        # Integrated Webshare proxy endpoints
+        self.webshare_proxies = [
+            "http://befjoeuj:3zyfgk068k6r@31.59.20.176:6754/",
+            "http://befjoeuj:3zyfgk068k6r@31.56.127.193:7684/",
+            "http://befjoeuj:3zyfgk068k6r@45.38.107.97:6014/",
+            "http://befjoeuj:3zyfgk068k6r@198.105.121.200:6462/",
+            "http://befjoeuj:3zyfgk068k6r@64.137.96.74:6641/",
+            "http://befjoeuj:3zyfgk068k6r@198.23.243.226:6361/",
+            "http://befjoeuj:3zyfgk068k6r@38.154.185.97:6370/",
+            "http://befjoeuj:3zyfgk068k6r@84.247.60.125:6095/",
+            "http://befjoeuj:3zyfgk068k6r@142.111.67.146:5611/",
+            "http://befjoeuj:3zyfgk068k6r@191.96.254.138:6185/"
+        ]
 
     def to_playwright_dict(self, proxy_str):
-        """Converts any proxy string (URL or IP:PORT:USER:PASS) to Playwright proxy dict format"""
+        """Converts proxy URL to Playwright dictionary format"""
         if not proxy_str:
             return None
         proxy_str = proxy_str.strip()
-        
-        # Check raw IP:PORT:USER:PASS format (without scheme)
-        if not (proxy_str.startswith("http://") or proxy_str.startswith("https://") or proxy_str.startswith("socks5://")):
-            parts = proxy_str.split(":")
-            if len(parts) == 4:
-                ip, port, user, pwd = parts
-                return {
-                    "server": f"http://{ip}:{port}",
-                    "username": user,
-                    "password": pwd
-                }
-            elif len(parts) == 2:
-                ip, port = parts
-                return {
-                    "server": f"http://{ip}:{port}"
-                }
-            proxy_str = "http://" + proxy_str
-
-        # Parse standard URL scheme: http://user:pass@host:port
-        from urllib.parse import urlparse
         parsed = urlparse(proxy_str)
         scheme = parsed.scheme or "http"
         host = parsed.hostname
@@ -62,117 +50,74 @@ class ProxyManager:
                 "server": f"{scheme}://{host}:{port}" if port else f"{scheme}://{host}"
             }
 
-    def get_custom_proxy(self):
-        """Check for user-supplied proxy in env or proxies.txt"""
-        env_proxy = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
-        if env_proxy:
-            return env_proxy.strip()
+    def is_proxy_working(self, proxy_url, timeout=5):
+        """
+        Verify Webshare proxy connectivity using requests:
+        requests.get("https://ipv4.webshare.io/", proxies={"http": proxy_url, "https": proxy_url})
+        """
+        if not proxy_url:
+            return False
+        try:
+            proxies = {
+                "http": proxy_url,
+                "https": proxy_url
+            }
+            resp = requests.get("https://ipv4.webshare.io/", proxies=proxies, timeout=timeout)
+            if resp.status_code == 200:
+                verified_ip = resp.text.strip()
+                logger.info(f"🌐 Webshare proxy verified (External IP: {verified_ip})")
+                return True
+            else:
+                logger.warning(f"⚠️ Webshare check returned status {resp.status_code}")
+                return False
+        except Exception as e:
+            masked = proxy_url.split("@")[-1] if "@" in proxy_url else proxy_url
+            logger.warning(f"⚠️ Webshare proxy ({masked}) check failed: {e}")
+            return False
 
-        if os.path.exists("proxies.txt"):
-            try:
-                with open("proxies.txt", "r", encoding="utf-8") as f:
-                    raw_lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-                    valid_lines = [p for p in raw_lines if p not in self.failed_proxies]
-                    if not valid_lines and raw_lines:
-                        self.failed_proxies.clear()
-                        valid_lines = raw_lines
-                    if valid_lines:
-                        return random.choice(valid_lines)
-            except Exception as e:
-                logger.warning(f"Could not read proxies.txt: {e}")
+    def get_working_proxy(self):
+        """
+        Tests Webshare proxies using requests.get('https://ipv4.webshare.io/').
+        Returns working proxy string if healthy, or None (fallback to direct connection) if failing.
+        """
+        env_proxy = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+        proxy_candidates = [env_proxy.strip()] if env_proxy else list(self.webshare_proxies)
+
+        available = [p for p in proxy_candidates if p not in self.failed_proxies]
+        if not available:
+            self.failed_proxies.clear()
+            available = list(proxy_candidates)
+
+        random.shuffle(available)
+
+        for p in available:
+            masked = p.split("@")[-1] if "@" in p else p
+            logger.info(f"🔍 Testing Webshare proxy {masked} with requests.get('https://ipv4.webshare.io/')...")
+            if self.is_proxy_working(p):
+                logger.info(f"✅ Webshare proxy active: {masked}")
+                self.current_proxy = p
+                return p
+            else:
+                self.failed_proxies.add(p)
+
+        logger.warning("⚠️ All Webshare proxies failed health check (e.g., subscription expired or tunnel error). Falling back to direct connection.")
+        self.current_proxy = None
         return None
 
     def get_working_proxy_dict(self):
-        """Returns the working proxy in Playwright dictionary format"""
+        """Returns the working proxy in Playwright dictionary format or None for direct connection"""
         raw_proxy = self.get_working_proxy()
         if not raw_proxy:
             return None
         return self.to_playwright_dict(raw_proxy)
 
-    def fetch_public_proxies(self):
-        """Fetch fresh list of live elite proxies from reliable public sources"""
-        current_time = time.time()
-        if self.cached_proxies and (current_time - self.last_fetch_time < self.fetch_cooldown):
-            return self.cached_proxies
-
-        sources = [
-            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=2500&ssl=yes&anonymity=elite",
-            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt"
-        ]
-
-        proxies = []
-        for url in sources:
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=4) as response:
-                    text = response.read().decode("utf-8", errors="ignore")
-                    for line in text.splitlines():
-                        line = line.strip()
-                        if ":" in line and not line.startswith("#"):
-                            if not line.startswith("http://") and not line.startswith("https://") and not line.startswith("socks5://"):
-                                line = "http://" + line
-                            proxies.append(line)
-                if len(proxies) >= 30:
-                    break
-            except Exception as e:
-                logger.debug(f"Source {url} fetch error: {e}")
-
-        proxies = list(set(proxies))
-        random.shuffle(proxies)
-        self.cached_proxies = proxies
-        self.last_fetch_time = current_time
-        logger.info(f"Fetched {len(proxies)} public proxies for rotation")
-        return proxies
-
-    def is_proxy_working(self, proxy_url, timeout=3):
-        """Test if proxy can establish HTTPS TLS tunnels to prevent NS_ERROR_NET_RESET"""
-        try:
-            handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-            opener = urllib.request.build_opener(handler)
-            req = urllib.request.Request("https://httpbin.org/ip", headers={"User-Agent": "Mozilla/5.0"})
-            with opener.open(req, timeout=timeout) as resp:
-                return resp.status in (200, 301, 302, 204)
-        except Exception:
-            return False
-
-    def get_working_proxy(self, max_trials=8):
-        """Returns a verified working proxy, or None if no healthy proxy is available"""
-        # 1. Custom proxy check first (from env or proxies.txt)
-        custom = self.get_custom_proxy()
-        if custom:
-            masked = custom.split("@")[-1] if "@" in custom else custom
-            logger.info(f"🌐 Using custom proxy: {masked}")
-            return custom
-
-        # 2. Check public pool
-        proxies = self.fetch_public_proxies()
-        if not proxies:
-            return None
-
-        candidates = [p for p in proxies if p not in self.failed_proxies]
-        if len(candidates) < 5:
-            self.failed_proxies.clear()
-            candidates = proxies
-
-        trials = min(max_trials, len(candidates))
-        test_batch = random.sample(candidates, trials)
-
-        logger.info(f"Testing {len(test_batch)} public proxies for HTTPS connectivity...")
-        for p in test_batch:
-            if self.is_proxy_working(p, timeout=3):
-                logger.info(f"✅ Found active HTTPS proxy: {p}")
-                return p
-            else:
-                self.failed_proxies.add(p)
-
-        logger.info("No public proxy passed HTTPS health check; running directly")
-        return None
-
-    def mark_failed(self, proxy_url):
+    def mark_failed(self, proxy_url=None):
         """Mark a proxy as failed so it's not reused immediately"""
-        if proxy_url:
-            self.failed_proxies.add(proxy_url)
+        target = proxy_url or self.current_proxy
+        if target:
+            self.failed_proxies.add(target)
+            masked = target.split("@")[-1] if "@" in target else target
+            logger.warning(f"Proxy marked as failed: {masked}")
 
 
 # Global singleton instance
