@@ -153,28 +153,54 @@ def build_ad_keyboard():
 # Sender Functions
 # ─────────────────────────────────────────────────────────────
 
-def send_advertisement_to_channel(telegram_token, channel_id):
+def send_advertisement_to_channel(telegram_token=None, channel_id=None):
     """
-    Sends an advanced advertisement message with interactive inline buttons to the channel.
+    Sends an advanced advertisement message with interactive inline buttons to all configured channels.
+    Supports a single channel, comma-separated string, or list of channels.
     Cycles through all ad templates every time it is triggered.
     """
     global _CURRENT_AD_INDEX
     try:
+        try:
+            from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNELS, parse_channel_ids
+            token = telegram_token or TELEGRAM_BOT_TOKEN
+            channels = parse_channel_ids(channel_id) if channel_id else list(TELEGRAM_CHANNELS)
+        except ImportError:
+            token = telegram_token
+            if isinstance(channel_id, list):
+                channels = channel_id
+            elif isinstance(channel_id, str):
+                channels = [c.strip() for c in channel_id.split(",") if c.strip()]
+            else:
+                channels = [channel_id] if channel_id else []
+
+        if not token or not channels:
+            logger.warning("Telegram token or channels not provided, skipping advertisement")
+            return False
+
         # Pick and rotate through all ad templates
         ad_func = AD_TEMPLATES[_CURRENT_AD_INDEX % len(AD_TEMPLATES)]
         _CURRENT_AD_INDEX += 1
         ad_message = ad_func()
         reply_markup = build_ad_keyboard()
 
-        async def _send():
-            bot = Bot(token=telegram_token)
-            await bot.send_message(
-                chat_id=channel_id,
-                text=ad_message,
-                parse_mode='HTML',
-                disable_web_page_preview=True,
-                reply_markup=reply_markup
-            )
+        async def _send_all():
+            bot = Bot(token=token)
+            success_count = 0
+            for ch in channels:
+                try:
+                    await bot.send_message(
+                        chat_id=ch,
+                        text=ad_message,
+                        parse_mode='HTML',
+                        disable_web_page_preview=True,
+                        reply_markup=reply_markup
+                    )
+                    logger.info(f"✅ Advanced advertisement sent to channel: {ch}")
+                    success_count += 1
+                except Exception as ch_err:
+                    logger.error(f"❌ Error sending advertisement to {ch}: {str(ch_err)}")
+            return success_count > 0
 
         try:
             loop = asyncio.get_running_loop()
@@ -182,23 +208,21 @@ def send_advertisement_to_channel(telegram_token, channel_id):
             loop = None
 
         if loop and loop.is_running():
-            asyncio.create_task(_send())
+            return asyncio.create_task(_send_all())
         else:
-            asyncio.run(_send())
+            return asyncio.run(_send_all())
 
-        logger.info(f"✅ Advanced advertisement sent to channel {channel_id}")
-        return True
     except Exception as e:
-        logger.error(f"❌ Error sending advertisement: {str(e)}")
+        logger.error(f"❌ Error in send_advertisement_to_channel: {str(e)}")
         import traceback
         logger.error(f"Detailed error: {traceback.format_exc()}")
         return False
 
 
-def check_and_send_advertisement(telegram_token, channel_id):
+def check_and_send_advertisement(telegram_token=None, channel_id=None):
     """
     Checks if an advertisement should be sent after a job posting
-    and sends it if conditions are met
+    and sends it to all configured channels if conditions are met
     """
     counter_file = "job_post_counter.txt"
 
@@ -223,7 +247,7 @@ def check_and_send_advertisement(telegram_token, channel_id):
 
     # Send advertisement after exactly 1 successful job posting
     if counter == 1:
-        logger.info("Sending advertisement after first successful job posting")
+        logger.info("Sending advertisement to all channels after first successful job posting")
         send_advertisement_to_channel(telegram_token, channel_id)
         return True
 

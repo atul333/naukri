@@ -16,11 +16,17 @@ from premium_bot import run_premium_bot, load_premium_users
 from advertisement import check_and_send_advertisement, send_advertisement_to_channel
 import tempfile
 
-# Use the actual token from the file
-TELEGRAM_TOKEN = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
-
-# Premium bot (t.me/Premium_Naukri_bot) - separate dedicated bot for user subscriptions
-PREMIUM_TOKEN = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
+# Configuration loaded from .env via config.py
+try:
+    from config import (
+        TELEGRAM_BOT_TOKEN as TELEGRAM_TOKEN,
+        TELEGRAM_CHANNELS,
+        PREMIUM_BOT_TOKEN as PREMIUM_TOKEN
+    )
+except ImportError:
+    TELEGRAM_TOKEN = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
+    TELEGRAM_CHANNELS = ["@IT_Job_openings_Naukri", "@job_opening_free"]
+    PREMIUM_TOKEN = "8762043028:AAEtOD5gkXQVkf8BTk4HYgukBQfiEp5HoK8"
 
 # Enable unbuffered stdout so nohup.out prints in real-time
 try:
@@ -477,9 +483,9 @@ async def extract_and_process_job(page, scraper):
         with open(job_details_file, "w", encoding="utf-8") as f:
             json.dump(job_details, f, indent=2)
             
-        # Post to Telegram channel
-        if scraper.telegram_token and scraper.channel_id:
-            logger.info("Posting new job to Telegram channel...")
+        # Post to Telegram channels
+        if scraper.telegram_token and (getattr(scraper, 'channels', None) or scraper.channel_id):
+            logger.info("Posting new job to Telegram channels...")
             result = await scraper.send_telegram_message(message, parse_mode='HTML', reply_markup=job_keyboard)
             if result:
                 logger.info(f"✅ Successfully posted job to Telegram: {title_clean}")
@@ -627,15 +633,15 @@ async def run_single_scan(scraper, job_url):
 
 async def main_scheduler():
     telegram_token = TELEGRAM_TOKEN
-    channel_id = "@IT_Job_openings_Naukri"
-    scraper = NaukriJobScraper(telegram_token, channel_id)
+    channels = TELEGRAM_CHANNELS
+    scraper = NaukriJobScraper(telegram_token, channels)
 
     last_ad_time = time.time()
     
-    # 1. Post initial advertisement
+    # 1. Post initial advertisement to all channels
     try:
-        logger.info("Posting initial advertisement...")
-        send_advertisement_to_channel(telegram_token, channel_id)
+        logger.info(f"Posting initial advertisement to channels: {', '.join(channels)}...")
+        send_advertisement_to_channel(telegram_token, channels)
     except Exception as e:
         logger.error(f"Startup advertisement failed: {e}")
 
@@ -651,8 +657,8 @@ async def main_scheduler():
             # 2. Check scheduled advertisement interval (every 12 hours / 43200 seconds)
             if time.time() - last_ad_time >= 12 * 3600:
                 try:
-                    logger.info("Posting 12-hour scheduled advertisement to channel...")
-                    send_advertisement_to_channel(telegram_token, channel_id)
+                    logger.info("Posting 12-hour scheduled advertisement to all channels...")
+                    send_advertisement_to_channel(telegram_token, channels)
                     last_ad_time = time.time()
                 except Exception as e:
                     logger.error(f"Advertisement posting failed: {e}")
@@ -663,6 +669,7 @@ async def main_scheduler():
 
         except asyncio.CancelledError:
             logger.info("Scraper scheduler stopped")
+
             break
         except Exception as e:
             logger.error(f"Scheduler cycle exception: {e}. Retrying in 10s...")

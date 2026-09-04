@@ -14,3 +14,5 @@ ENV/
 playwright_tmp/
 pw-browsers/
 .DS_Store
+.env
+!.env.example

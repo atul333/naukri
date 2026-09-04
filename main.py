@@ -39,10 +39,25 @@ try:
 except Exception as env_err:
     logger.warning(f"Failed to initialize safe temp path in main.py: {env_err}")
 class NaukriJobScraper:
-    def __init__(self, telegram_token, channel_id):
+    def __init__(self, telegram_token=None, channel_id=None):
+        try:
+            from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNELS, parse_channel_ids
+            self.telegram_token = telegram_token or TELEGRAM_BOT_TOKEN
+            if channel_id:
+                self.channels = parse_channel_ids(channel_id)
+            else:
+                self.channels = list(TELEGRAM_CHANNELS)
+        except ImportError:
+            self.telegram_token = telegram_token
+            if isinstance(channel_id, list):
+                self.channels = channel_id
+            elif isinstance(channel_id, str):
+                self.channels = [c.strip() for c in channel_id.split(",") if c.strip()]
+            else:
+                self.channels = [channel_id] if channel_id else []
+
+        self.channel_id = self.channels[0] if self.channels else None
         self.job_url = "https://www.naukri.com/it-jobs?src=gnbjobs_homepage_srch"
-        self.telegram_token = telegram_token
-        self.channel_id = channel_id
         self.db_path = "jobs.db"
         self.use_proxies = False  # Disabled: free proxies cause tunnel failures; AWS direct IP works fine
         self.proxies = []
@@ -958,66 +973,129 @@ class NaukriJobScraper:
         conn.commit()
         
     async def send_telegram_message(self, message_text, parse_mode=None, reply_markup=None):
-        """Send a message to Telegram with optional inline buttons"""
-        if not self.telegram_token or not self.channel_id:
-            logger.warning("Telegram credentials not provided, skipping message")
+        """Send a message to all configured Telegram channels with optional inline buttons"""
+        channels = getattr(self, 'channels', None) or ([self.channel_id] if self.channel_id else [])
+        if not self.telegram_token or not channels:
+            logger.warning("Telegram credentials or channels not provided, skipping message")
             return False
         
-        try:
-            bot = Bot(token=self.telegram_token)
-            kwargs = {
-                'chat_id': self.channel_id,
-                'text': message_text,
-                'disable_web_page_preview': True
-            }
-            if parse_mode:  # Only add parse_mode if not None/empty
-                kwargs['parse_mode'] = parse_mode
-            if reply_markup:
-                kwargs['reply_markup'] = reply_markup
-            message = await bot.send_message(**kwargs)
-            logger.info("Sent message to Telegram")
-            return True
-        except Exception as e:
-            logger.error(f"Error sending to Telegram: {str(e)}")
-            return False
+        bot = Bot(token=self.telegram_token)
+        success_count = 0
+        
+        for ch in channels:
+            try:
+                kwargs = {
+                    'chat_id': ch,
+                    'text': message_text,
+                    'disable_web_page_preview': True
+                }
+                if parse_mode:
+                    kwargs['parse_mode'] = parse_mode
+                if reply_markup:
+                    kwargs['reply_markup'] = reply_markup
+                await bot.send_message(**kwargs)
+                logger.info(f"✅ Sent message to Telegram channel: {ch}")
+                success_count += 1
+            except Exception as e:
+                logger.error(f"❌ Error sending to Telegram channel {ch}: {str(e)}")
+                
+        return success_count > 0
     
     def is_duplicate_job(self, job):
         """Check if a job with the same details has been posted before"""
-        # Use a simple text file to store all job URLs that have been posted
-        # This is the most reliable way to prevent duplicates
         posted_urls_file = "posted_job_urls.txt"
-        
-        # Create the file if it doesn't exist
         if not os.path.exists(posted_urls_file):
             with open(posted_urls_file, "w", encoding="utf-8") as f:
                 f.write("# This file contains all job URLs that have been posted to Telegram\n")
         
-        # Check if this job URL has been posted before
-        job_url = job['apply_link']
-        
-        # Read all posted URLs
+        job_url = job.get('apply_link', '')
         with open(posted_urls_file, "r", encoding="utf-8") as f:
             posted_urls = f.read().splitlines()
         
-        # If the URL is in the list, it's a duplicate
         if job_url in posted_urls:
             logger.info(f"Found duplicate job URL: {job_url}")
             return True
             
-        # Also check for similar jobs by title, company, and location
+        # Also check for similar jobs in job_details.json
+        job_details_file = "job_details.json"
+        if os.path.exists(job_details_file):
+            try:
+                with open(job_details_file, "r", encoding="utf-8") as f:
+                    posted_jobs = json.load(f)
+                for key, stored_job in posted_jobs.items():
+                    if (job.get('title') == stored_job.get('title') and 
+                        job.get('company') == stored_job.get('company') and
+                        job.get('location') == stored_job.get('location') and
+                        job.get('experience') == stored_job.get('experience')):
+                        logger.info(f"Found duplicate job details: {job.get('title')} at {job.get('company')}")
+                        with open(posted_urls_file, "a", encoding="utf-8") as f:
+                            f.write(f"{job_url}\n")
+                        return True
+            except Exception:
+                pass
+        
         return False
-    
+
+    def store_job_details(self, job):
+        """Store job details in a JSON file for reference and duplicate checking"""
+        job_details_file = "job_details.json"
+        job_key = job.get('apply_link', '')
+        job_details = {
+            "title": job.get('title', ''),
+            "company": job.get('company', ''),
+            "location": job.get('location', ''),
+            "experience": job.get('experience', 'Not specified'),
+            "posted_date": job.get('posted_date', ''),
+            "link": job_key,
+            "job_id": job.get('job_id', ''),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        posted_jobs = {}
+        if os.path.exists(job_details_file):
+            try:
+                with open(job_details_file, "r", encoding="utf-8") as f:
+                    posted_jobs = json.load(f)
+            except Exception:
+                posted_jobs = {}
+        
+        posted_jobs[job_key] = job_details
+        with open(job_details_file, "w", encoding="utf-8") as f:
+            json.dump(posted_jobs, f, indent=2, ensure_ascii=False)
+            
+        logger.info(f"Stored job details for: {job.get('title')} at {job.get('company')}")
+
+    def encrypt_job_url(self, url):
+        """Create a working encrypted URL for Naukri job listings"""
+        import re
+        job_id_match = re.search(r'job-listings-.*?-(\d+)$', url)
+        if job_id_match:
+            job_id = job_id_match.group(1)
+            return f"https://www.naukri.com/job-listings-{job_id}"
+        return url
+
+    def encrypt_job_link(self, url):
+        """Alias for encrypt_job_url"""
+        return self.encrypt_job_url(url)
+
     async def post_job_to_telegram(self, job):
         """
-        Post extracted job details to Telegram channel with world-class HTML card layout
+        Post extracted job details to all Telegram channels with HTML card layout
         and interactive inline buttons
         """
-        if not self.telegram_token or not self.channel_id:
-            logger.warning("Telegram credentials not provided, skipping Telegram post")
+        channels = getattr(self, 'channels', None) or ([self.channel_id] if self.channel_id else [])
+        if not self.telegram_token or not channels:
+            logger.warning("Telegram credentials or channels not provided, skipping Telegram post")
             return False
-            
-        encrypted_link = self.encrypt_job_url(job['apply_link'])
-        
+
+        if self.is_duplicate_job(job):
+            logger.info(f"Skipping duplicate job: {job.get('title')} at {job.get('company')}")
+            if 'job_id' in job:
+                self.mark_job_as_posted(job['job_id'])
+            return False
+
+        encrypted_link = self.encrypt_job_url(job.get('apply_link', ''))
+
         # Build clean hashtag string (Max 3 hashtags)
         skills = job.get('skills', [])
         import re as _re
@@ -1036,12 +1114,12 @@ class NaukriJobScraper:
                     hashtag_list.append(f"#{w}")
                 if len(hashtag_list) >= 3:
                     break
-        
+
         if not hashtag_list:
             hashtag_list = [f"#{job.get('category', 'IT')}Jobs"]
-        
+
         hashtags = ' '.join(hashtag_list[:3])
-        
+
         title = job.get('title', 'Job Opening').strip()
         company = job.get('company', 'Top Tech Organization').strip()
         experience = job.get('experience', 'Not specified').strip()
@@ -1049,8 +1127,7 @@ class NaukriJobScraper:
         ctc = job.get('ctc', 'Not Disclosed').strip()
         if not ctc or ctc.upper() == 'NA':
             ctc = "Best in Industry / As per Norms"
-        
-        # Compact Job Card Layout with Role at the top
+
         message = (
             f"💼 <b>Role:</b> <b>{title}</b>\n\n"
             f"🏢 <b>Company:</b> {company}\n"
@@ -1058,214 +1135,32 @@ class NaukriJobScraper:
             f"📍 <b>Location:</b> <code>{location}</code>\n"
             f"💰 <b>Salary / CTC:</b> <code>{ctc}</code>\n"
         )
-        
+
         if hashtags and hashtags.strip():
             message += f"\n🏷️ {hashtags.strip()}\n"
-            
+
         message += f"\n🔗 <b>Apply Link:</b> {encrypted_link}\n"
         message += "\n💡 <i>Get instant matching alerts:</i> @Premium_Naukri_bot"
-        
+
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         reply_markup = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("⚡ Quick Apply", url=encrypted_link)
-            ],
-            [
-                InlineKeyboardButton("💎 Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")
-            ]
+            [InlineKeyboardButton("⚡ Quick Apply", url=encrypted_link)],
+            [InlineKeyboardButton("💎 Custom Job Alerts", url="https://t.me/Premium_Naukri_bot")]
         ])
-        
+
         try:
             from advertisement import check_and_send_advertisement
             result = await self.send_telegram_message(message, parse_mode='HTML', reply_markup=reply_markup)
             if result:
-                logger.info(f"Posted job to Telegram: {job['title']}")
-                check_and_send_advertisement(self.telegram_token, self.channel_id)
-            return result
-        except Exception as e:
-            logger.error(f"Error posting to Telegram: {str(e)}")
-            return False
-            
-        # Also check for similar jobs by title, company, and location
-        job_details_file = "job_details.json"
-        posted_jobs = {}
-        
-        if os.path.exists(job_details_file):
-            try:
-                with open(job_details_file, "r", encoding="utf-8") as f:
-                    posted_jobs = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                posted_jobs = {}
-        
-        # Check all jobs in our records to find similar ones
-        for key, stored_job in posted_jobs.items():
-            # Check if title, company, and location match
-            if (job['title'] == stored_job['title'] and 
-                job['company'] == stored_job['company']):
-                
-                logger.info(f"Found duplicate job with same title and company: {job['title']} at {job['company']}")
-                
-                # Add this URL to the posted URLs file to prevent future duplicates
+                logger.info(f"✅ Posted job to Telegram channels: {job.get('title')}")
+                self.store_job_details(job)
+                posted_urls_file = "posted_job_urls.txt"
                 with open(posted_urls_file, "a", encoding="utf-8") as f:
-                    f.write(f"{job_url}\n")
-                    
-                return True
-        
-        # Not a duplicate, store it and return False
-        self.store_job_details(job)
-        
-        # Add this URL to the posted URLs file
-        with open(posted_urls_file, "a", encoding="utf-8") as f:
-            f.write(f"{job_url}\n")
-            
-        return False
-        
-    def store_job_details(self, job):
-        """Store job details in a JSON file for reference and duplicate checking"""
-        job_details_file = "job_details.json"
-        
-        # Use the job URL as the unique key - this is the most reliable way to identify unique jobs
-        job_key = job['apply_link']
-        
-        # Prepare job details with all available information
-        job_details = {
-            "title": job['title'],
-            "company": job['company'],
-            "location": job['location'],
-            "experience": job.get('experience', 'Not specified'),
-            "posted_date": job['posted_date'],
-            "link": job['apply_link'],
-            "job_id": job.get('job_id', ''),
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # Read existing data
-        posted_jobs = {}
-        if os.path.exists(job_details_file):
-            try:
-                with open(job_details_file, "r", encoding="utf-8") as f:
-                    posted_jobs = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                # If file is empty or invalid, start with empty dict
-                posted_jobs = {}
-        
-        # Add new job
-        posted_jobs[job_key] = job_details
-        
-        # Write back to file
-        with open(job_details_file, "w", encoding="utf-8") as f:
-            json.dump(posted_jobs, f, indent=2, ensure_ascii=False)
-            
-        logger.info(f"Stored job details for: {job['title']} at {job['company']}, {job['location']}")
-        
-    def encrypt_job_url(self, url):
-        """Create a working encrypted URL for Naukri job listings"""
-        import hashlib
-        
-        # Extract the job ID from the URL if possible
-        import re
-        # Updated regex pattern to match various Naukri job URL formats
-        job_id_match = re.search(r'job-listings-.*?-(\d+)$', url)
-        
-        if job_id_match:
-            # If we can extract the job ID, use it directly
-            job_id = job_id_match.group(1)
-            # Create a working URL format that Naukri supports
-            return f"https://www.naukri.com/job-listings-{job_id}"
-        else:
-            # If we can't extract the job ID, return the original URL
-            # This ensures the link will always work
-            return url
+                    f.write(f"{job.get('apply_link', '')}\n")
+                if 'job_id' in job:
+                    self.mark_job_as_posted(job['job_id'])
 
-    def encrypt_job_link(self, url):
-        """Alias for encrypt_job_url"""
-        return self.encrypt_job_url(url)
-        
-    async def post_job_to_telegram(self, job):
-        """Post a job to the Telegram channel"""
-        # First check if this exact URL has been posted before
-        posted_urls_file = "posted_job_urls.txt"
-        
-        # Counter file for tracking job posts for advertisement display
-        counter_file = "job_post_counter.txt"
-        
-        # Create the files if they don't exist
-        if not os.path.exists(posted_urls_file):
-            with open(posted_urls_file, "w", encoding="utf-8") as f:
-                f.write("# This file contains all job URLs that have been posted to Telegram\n")
-                
-        if not os.path.exists(counter_file):
-            with open(counter_file, "w", encoding="utf-8") as f:
-                f.write("0")
-        
-        # Read all posted URLs
-        with open(posted_urls_file, "r", encoding="utf-8") as f:
-            posted_urls = f.read().splitlines()
-        
-        # If the URL is in the list, it's a duplicate - skip it and mark in DB
-        if job['apply_link'] in posted_urls:
-            logger.info(f"Skipping duplicate job URL: {job['apply_link']}")
-            self.mark_job_as_posted(job['job_id'])  # Mark in DB to stop infinite loop
-            return False
-            
-        # Also check for similar jobs using our improved method
-        if self.is_duplicate_job(job):
-            logger.info(f"Skipping duplicate job: {job['title']} at {job['company']}")
-            self.mark_job_as_posted(job['job_id'])  # Mark in DB to stop infinite loop
-            return False
-            
-        # Encrypt the job URL
-        encrypted_link = self.encrypt_job_url(job['apply_link'])
-        logger.info(f"Original link: {job['apply_link']}")
-        logger.info(f"Encrypted link: {encrypted_link}")
-            
-        # Format message to match the required format (plain text, no Markdown)
-        import re as _re
-        
-        # Generate hashtags from skill tags (e.g. FastAPI, React, Python)
-        # Falls back to title words if no skills found
-        import re as _re
-        skills = job.get('skills', [])
-        hashtag_list = []
-        if skills:
-            for s in skills:
-                tag = _re.sub(r'[^a-zA-Z0-9]', '', s.title().replace(' ', ''))
-                if tag:
-                    hashtag_list.append(f"#{tag}")
-                if len(hashtag_list) >= 3:
-                    break
-        else:
-            title_words = _re.findall(r'[A-Za-z][a-zA-Z0-9]+', job['title'])
-            for w in title_words:
-                if len(w) > 2:
-                    hashtag_list.append(f"#{w}")
-                if len(hashtag_list) >= 3:
-                    break
-        
-        if not hashtag_list:
-            hashtag_list = [f"#{job.get('category', 'IT')}Jobs"]
-        
-        hashtags = ' '.join(hashtag_list[:3])
-        
-        experience = job.get('experience', 'Not specified')
-        ctc = job.get('ctc', 'NA') or 'NA'
-        
-        message = (
-            f"📌 {job['title']}\n\n"
-            f"🏢 Company: {job['company']}\n\n"
-            f"⏳ Experience: {experience}\n\n"
-            f"📍 Location: {job['location']}\n\n"
-            f"💰 CTC: {ctc}\n\n"
-            f"{hashtags}\n\n"
-            f"🔗 Apply Link: {encrypted_link}"
-        )
-        
-        try:
-            from advertisement import check_and_send_advertisement
-            result = await self.send_telegram_message(message, parse_mode=None)
-            if result:
-                logger.info(f"Posted job to Telegram: {job['title']}")
-                check_and_send_advertisement(self.telegram_token, self.channel_id)
+                check_and_send_advertisement(self.telegram_token, channels)
             return result
         except Exception as e:
             logger.error(f"Error posting to Telegram: {str(e)}")
@@ -1441,12 +1336,10 @@ class NaukriJobScraper:
 
 async def main():
     """Main function to run the scraper"""
-    # Configuration
-    telegram_token = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"
-    channel_id = "@IT_Job_openings_Naukri"
+    from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNELS
     
-    # Initialize scraper
-    scraper = NaukriJobScraper(telegram_token, channel_id)
+    # Initialize scraper with channels from .env
+    scraper = NaukriJobScraper(TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNELS)
     
     try:
         # Run once
@@ -1465,4 +1358,4 @@ async def main():
         logger.info("Scraper shutdown complete")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main())

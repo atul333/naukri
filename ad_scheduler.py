@@ -15,17 +15,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Telegram configuration
-TELEGRAM_TOKEN = "8737613068:AAGtpmp32TVyz7YACORGYhNta89HJDg3HFg"  # Telegram bot token
-CHANNEL_ID = "@IT_Job_openings_Naukri"  # Telegram channel ID
+from config import TELEGRAM_BOT_TOKEN as TELEGRAM_TOKEN, TELEGRAM_CHANNELS
+CHANNELS_STR = ", ".join(TELEGRAM_CHANNELS)
 
 def post_advertisement():
     """
-    Posts an advertisement to the Telegram channel
+    Posts an advertisement to all configured Telegram channels
     """
-    logger.info("Posting scheduled advertisement to channel")
-    result = send_advertisement_to_channel(TELEGRAM_TOKEN, CHANNEL_ID)
+    logger.info(f"Posting scheduled advertisement to channels: {CHANNELS_STR}")
+    result = send_advertisement_to_channel(TELEGRAM_TOKEN, TELEGRAM_CHANNELS)
     if result:
-        logger.info("✅ Advertisement posted successfully")
+        logger.info("✅ Advertisement posted successfully to all channels")
     else:
         logger.error("❌ Failed to post advertisement")
 
@@ -34,7 +34,7 @@ def main():
     Main function to run the advertisement scheduler
     """
     logger.info("Starting advertisement scheduler")
-    logger.info(f"Advertisements will be posted every 12 hours to {CHANNEL_ID}")
+    logger.info(f"Advertisements will be posted every 12 hours to {CHANNELS_STR}")
     
     # Schedule advertisement posting every 12 hours
     schedule.every(12).hours.do(post_advertisement)
