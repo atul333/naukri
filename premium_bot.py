@@ -9,6 +9,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.error import Forbidden, BadRequest, NetworkError, TimedOut
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, ConversationHandler, CallbackQueryHandler,
@@ -757,6 +758,36 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ─────────────────────────────────────────────
+# Global Error Handler
+# ─────────────────────────────────────────────
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Global error handler for the bot.
+    Gracefully handles Forbidden (user blocked the bot), BadRequest, etc.
+    """
+    error = context.error
+
+    if isinstance(error, Forbidden):
+        # User has blocked the bot — nothing we can do, just log cleanly
+        user_id = None
+        if isinstance(update, Update) and update.effective_user:
+            user_id = update.effective_user.id
+        logger.warning(f"🚫 Bot blocked by user (ID: {user_id}). Skipping silently.")
+        return
+
+    if isinstance(error, BadRequest):
+        logger.warning(f"⚠️ BadRequest from Telegram: {error}")
+        return
+
+    if isinstance(error, (NetworkError, TimedOut)):
+        logger.warning(f"🌐 Network/Timeout error: {error}")
+        return
+
+    # For unexpected errors, log the full traceback
+    logger.error(f"❌ Unhandled exception in update handler:", exc_info=context.error)
+
+
+# ─────────────────────────────────────────────
 # Post-Init: Register Telegram Commands Menu
 # ─────────────────────────────────────────────
 async def post_init(application: Application):
@@ -838,6 +869,9 @@ def run_premium_bot(token=None):
     app.add_handler(CommandHandler("profile", view_profile_card))
     app.add_handler(CommandHandler("mypreferences", view_profile_card))
     app.add_handler(CommandHandler("help", show_help))
+
+    # Register global error handler — suppresses noisy "bot blocked" tracebacks
+    app.add_error_handler(error_handler)
 
     logger.info("Starting Advanced Premium Naukri Bot (v20 async)...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None, close_loop=False)
